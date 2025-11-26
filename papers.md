@@ -121,32 +121,41 @@ The agent is rewarded immediately after opening a round-trip based on the maximu
 We modified the strategy to use **Logarithmic PNL returns** and combine **Market orders** (entry) with **Limit orders** (exit).
 
 The reward function is:
-$$r_{t+1} = \begin{cases} 
-\ln(\frac{H_{t_{max}} - f \cdot H_{t_{max}}}{C_t + f \cdot C_t}) & \text{if } a_t = BUY \\
-\ln(\frac{C_t + f \cdot C_t}{L_{t_{min}} - f \cdot L_{t_{min}}}) & \text{if } a_t = SELL \\
--\max(r_{t(a)}) & \text{if } a_t = HOLD 
-\end{cases}$$
+
+$$
+r_{t+1} = \begin{cases} 
+\ln\left(\frac{H_{t_{max}} - f \cdot H_{t_{max}}}{C_t + f \cdot C_t}\right) & \text{if } a_t = \text{BUY} \\
+\ln\left(\frac{C_t + f \cdot C_t}{L_{t_{min}} - f \cdot L_{t_{min}}}\right) & \text{if } a_t = \text{SELL} \\
+-\max(r_{t(a)}) & \text{if } a_t = \text{HOLD} 
+\end{cases}
+$$
 
 Using the property $\ln(A \cdot B) = \ln A + \ln B$, we can sum these logarithmic returns to get the total cumulative return. The use of log returns ensures "raw-log equality" for small returns ($\log(1+r) \approx r$), motivating the agent to avoid uncertain trading periods where potential profit is small.
 
 ### 4.2 Smurfing
 
 A secondary agent ("Smurf") is trained to detect high-risk states.
+
 * **Higher Fees:** Trained with fees $f' > f$.
 * **Positive Hold Reward:** Reward for holding is a small positive constant $w \ll 1$.
 
 **Smurf's Reward:**
-$$r'_{t+1} = \begin{cases} 
-\ln(\frac{H_{t_{max}} - f' \cdot H_{t_{max}}}{C_t + f' \cdot C_t}) & \text{if } a_t = BUY \\
-\ln(\frac{C_t + f' \cdot C_t}{L_{t_{min}} - f' \cdot L_{t_{min}}}) & \text{if } a_t = SELL \\
-w & \text{if } a_t = HOLD 
-\end{cases}$$
+
+$$
+r'_{t+1} = \begin{cases} 
+\ln\left(\frac{H_{t_{max}} - f' \cdot H_{t_{max}}}{C_t + f' \cdot C_t}\right) & \text{if } a_t = \text{BUY} \\
+\ln\left(\frac{C_t + f' \cdot C_t}{L_{t_{min}} - f' \cdot L_{t_{min}}}\right) & \text{if } a_t = \text{SELL} \\
+w & \text{if } a_t = \text{HOLD} 
+\end{cases}
+$$
 
 ### 4.3 The Integrated TraderNet-CR
 
-1.  **Smurf Check:** During exploitation, Smurf's policy determines if opening a trade has high PNL potential. If Smurf says HOLD, the system holds.
-2.  **TraderNet Decision:** If Smurf allows trading, TraderNet selects an action (BUY or SELL).
-3.  **N-Consecutive Rule:** The selected action is executed only if the agent suggested the same action for the previous $N$ consecutive steps ($a_t = a_{t-1} = \dots = a_{t-N+1}$).
+In this paper, we integrate all the aforementioned modules into a single integrated agent.
+
+1.  **Smurf Check:** During the exploitation phase, we use Smurf's policy to determine whether opening a round-trip at a state $s_t$ has high PNL potential. If Smurf selects HOLD, the system holds.
+2.  **TraderNet Decision:** If Smurf allows trading, we use TraderNet's policy to select an action $a_t$ (BUY or SELL).
+3.  **N-Consecutive Rule:** Finally, we use the N-Consecutive mechanism. The action $a_t$ is executed only if the agent suggested the same action for the previous $N$ consecutive steps ($a_t = a_{t-1} = \dots = a_{t-N+1}$).
 
 ---
 
