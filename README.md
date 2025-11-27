@@ -210,81 +210,72 @@ Each state is a sliding window of 12 hourly timesteps with 19 features:
 
 ## Phase 3: Trading Environment
 
-Gymnasium-compatible trading environment for reinforcement learning.
+Two Gymnasium-compatible trading environments for reinforcement learning.
 
-### Create environment from processed data
+### 1. TradingEnv (Single-Step Rewards)
+
+Original paper implementation - each step is independent, rewards based on potential profit.
 
 ```python
 from environments.trading_env import create_trading_env
 
-# Create environment with MarketLimitOrder reward
 env = create_trading_env('data/datasets/BTC_processed.csv', reward_type='market_limit')
-
-# Or with Smurf reward (conservative)
-env_smurf = create_trading_env('data/datasets/BTC_processed.csv', reward_type='smurf')
 ```
 
-### Environment details
+### 2. PositionTradingEnv (Realistic Trading)
+
+Position-based environment that simulates real trading:
+- Must open position before closing
+- HOLD keeps position open
+- Actual P&L calculated on close with fees
 
 ```python
-print(env.observation_space)  # Box(0.0, 1.0, (12, 19), float32)
-print(env.action_space)       # Discrete(3) - BUY=0, SELL=1, HOLD=2
-print(env.episode_length)     # ~52,000 steps for BTC
-```
+from environments.position_trading_env import create_position_trading_env
 
-### Run an episode
+env = create_position_trading_env('data/datasets/BTC_processed.csv')
 
-```python
 obs, info = env.reset()
 
-total_reward = 0
-while True:
-    action = env.action_space.sample()  # Random action (replace with agent)
-    obs, reward, terminated, truncated, info = env.step(action)
-    total_reward += reward
-    
-    if terminated:
-        break
+# Open LONG position
+obs, reward, _, _, info = env.step(0)  # BUY -> LONG
+print(info['position'])  # 'LONG'
 
-print(f"Episode reward: {total_reward:.4f}")
-print(f"Action distribution: {env.get_action_distribution()}")
+# Hold position
+obs, reward, _, _, info = env.step(2)  # HOLD
+print(info['unrealized_pnl'])  # Current P&L
+
+# Close position
+obs, reward, _, _, info = env.step(1)  # SELL -> FLAT
+print(reward)  # Realized P&L with fees
 ```
 
-### Manual environment creation
+### Position States
 
-```python
-from data.datasets.utils import prepare_training_data
-from environments.trading_env import TradingEnv
-
-# Load data
-data = prepare_training_data('data/datasets/BTC_processed.csv')
-
-# Create environment
-env = TradingEnv(
-    sequences=data['train']['sequences'],
-    highs=data['train']['highs'],
-    lows=data['train']['lows'],
-    closes=data['train']['closes']
-)
+```
+FLAT  + BUY  -> LONG   (open long)
+FLAT  + SELL -> SHORT  (open short)
+LONG  + HOLD -> LONG   (keep holding)
+LONG  + SELL -> FLAT   (close long, get P&L)
+SHORT + HOLD -> SHORT  (keep holding)
+SHORT + BUY  -> FLAT   (close short, get P&L)
 ```
 
-### Reward Functions
+### Environment Comparison
+
+| Feature | TradingEnv | PositionTradingEnv |
+|---------|------------|-------------------|
+| Position tracking | No | Yes (FLAT/LONG/SHORT) |
+| HOLD behavior | Independent step | Maintains position |
+| Rewards | Potential profit | Actual P&L on close |
+| Fees | Once per step | On open + close |
+| Use case | Paper replication | Realistic trading |
+
+### Reward Functions (TradingEnv only)
 
 | Type | HOLD Reward | Use Case |
 |------|-------------|----------|
 | `market_limit` | Negative (penalize inaction) | Main TraderNet agent |
 | `smurf` | +0.0055 (encourage holding) | Conservative Smurf agent |
-
-**MarketLimitOrder Reward:**
-```
-BUY:  log(max_high_in_horizon / close) + fee_adjustment
-SELL: log(close / min_low_in_horizon) + fee_adjustment
-HOLD: -max(buy_reward, sell_reward), capped at 0
-```
-
-**Smurf Reward:**
-- Same BUY/SELL as MarketLimitOrder
-- HOLD = fixed +0.0055 (encourages conservative behavior)
 
 ---
 
