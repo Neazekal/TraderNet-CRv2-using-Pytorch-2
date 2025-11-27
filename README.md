@@ -8,7 +8,7 @@ Original TensorFlow implementation: [kochlisGit/TraderNet-CRv2](https://github.c
 
 ---
 
-## 🚀 Features
+## Features
 
 - **PPO Agent**: Proximal Policy Optimization for trading decisions (BUY/SELL/HOLD)
 - **Technical Analysis**: 11 indicators (MACD, RSI, Bollinger Bands, ADX, etc.)
@@ -18,7 +18,7 @@ Original TensorFlow implementation: [kochlisGit/TraderNet-CRv2](https://github.c
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 tradernet-pytorch/
@@ -53,7 +53,7 @@ tradernet-pytorch/
 
 ---
 
-## 🛠️ Installation
+## Installation
 
 ### 1. Clone the repository
 
@@ -79,7 +79,7 @@ pip install -r requirements.txt
 
 ---
 
-## 📊 Phase 1: Data Download
+## Phase 1: Data Download
 
 Download historical OHLCV data from Binance Futures.
 
@@ -131,7 +131,7 @@ downloader.update('data/storage/BTC.csv')  # Fetches new candles since last time
 
 ---
 
-## 🔧 Phase 2: Data Preprocessing
+## Phase 2: Data Preprocessing
 
 Process raw OHLCV data into training-ready features.
 
@@ -208,7 +208,7 @@ Each state is a sliding window of 12 hourly timesteps with 19 features:
 
 ---
 
-## 🎮 Phase 3: Trading Environment
+## Phase 3: Trading Environment
 
 Gymnasium-compatible trading environment for reinforcement learning.
 
@@ -288,7 +288,7 @@ HOLD: -max(buy_reward, sell_reward), capped at 0
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 All hyperparameters are centralized in `config/config.py`:
 
@@ -348,7 +348,7 @@ CHECKPOINT_DIR = 'checkpoints/'
 
 ---
 
-## 📈 Quick Start
+## Quick Start
 
 ```bash
 # 1. Install dependencies
@@ -390,7 +390,7 @@ Action: BUY, Reward: 0.0123
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
 - [x] **Phase 1**: Project setup & Binance data downloader
 - [x] **Phase 2**: Technical analysis & preprocessing pipeline
@@ -403,7 +403,7 @@ Action: BUY, Reward: 0.0123
 
 ---
 
-## 📚 References
+## References
 
 1. Kochliaridis et al. (2023) - *"Combining deep reinforcement learning with technical analysis and trend monitoring on cryptocurrency markets"*
 2. Schulman et al. (2017) - *"Proximal Policy Optimization Algorithms"*
@@ -411,12 +411,12 @@ Action: BUY, Reward: 0.0123
 
 ---
 
-## 📄 License
+## License
 
 This project is for educational and research purposes.
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please read the [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for details on the architecture and planned features.
