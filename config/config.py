@@ -92,9 +92,9 @@ USE_ISOLATED_MARGIN = True      # Isolated margin (max loss = position margin on
 # =============================================================================
 # Feature Engineering
 # =============================================================================
-NUM_FEATURES = 19
+NUM_FEATURES = 20  # 19 features + regime
 
-# Feature list (19 features total)
+# Feature list (19 features + regime)
 FEATURES = [
     # Log returns (5)
     'open_log_returns', 'high_log_returns', 'low_log_returns',
@@ -108,7 +108,9 @@ FEATURES = [
     # Technical indicators - Price relative (4)
     'close_dema', 'close_vwap', 'bband_up_close', 'close_bband_down',
     # Technical indicators - Volume (2)
-    'adl_diffs2', 'obv_diffs2'
+    'adl_diffs2', 'obv_diffs2',
+    # Market regime (1) - encoded as 0-3
+    'regime_encoded'
 ]
 
 # Technical indicator window parameters
@@ -124,6 +126,19 @@ TA_PARAMS = {
     'adx_window': 14,
     'aroon_window': 25,
     'bbands_window': 20,
+}
+
+# =============================================================================
+# Market Regime Detection Parameters
+# =============================================================================
+# Regimes: TRENDING_UP, TRENDING_DOWN, HIGH_VOLATILITY, RANGING
+REGIME_PARAMS = {
+    'volatility_window': 24,           # Hours for rolling volatility
+    'volatility_high_percentile': 75,  # Above this = HIGH_VOLATILITY
+    'volatility_low_percentile': 25,   # Below this = low vol (for RANGING)
+    'trend_window': 50,                # SMA period for trend direction
+    'adx_threshold': 25,               # ADX above this = strong trend
+    'lookback_for_percentiles': 720,   # 30 days for adaptive thresholds
 }
 
 # =============================================================================

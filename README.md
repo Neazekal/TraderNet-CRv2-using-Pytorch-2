@@ -32,7 +32,8 @@ tradernet-pytorch/
 │   │   └── binance.py             # CCXT Binance Futures downloader
 │   ├── preprocessing/
 │   │   ├── ohlcv.py               # Log returns & hour extraction
-│   │   └── technical.py           # Derived features
+│   │   ├── technical.py           # Derived features
+│   │   └── regime.py              # Market regime detection
 │   ├── datasets/
 │   │   ├── builder.py             # Dataset building pipeline
 │   │   └── utils.py               # Train/eval split utilities
@@ -168,10 +169,28 @@ The pipeline performs these steps:
 3. **Extract hour** - Temporal pattern (0-23)
 4. **Compute technical indicators** - 11 indicators
 5. **Compute derived features** - Price relative positions, volume acceleration
-6. **Min-Max scaling** - Normalize to [0, 1]
-7. **Drop NaN rows** - Remove indicator warm-up period
+6. **Detect market regime** - Classify market conditions
+7. **Min-Max scaling** - Normalize to [0, 1]
+8. **Drop NaN rows** - Remove indicator warm-up period
 
-### Features (19 total)
+### Market Regime Detection
+
+The system classifies market conditions into 4 regimes using rolling volatility and trend strength:
+
+| Regime | Description | Detection Criteria |
+|--------|-------------|-------------------|
+| TRENDING_UP | Strong uptrend | ADX > 25 and price above 50-period SMA |
+| TRENDING_DOWN | Strong downtrend | ADX > 25 and price below 50-period SMA |
+| HIGH_VOLATILITY | Choppy/uncertain | Volatility in top 25% of recent history |
+| RANGING | Sideways market | Low volatility with weak trend |
+
+This lightweight approach (no HMM or complex models) provides regime awareness for the agent to:
+- Adapt strategy based on market conditions
+- Avoid overtrading in ranging markets
+- Be more aggressive in trending markets
+- Be cautious in high volatility periods
+
+### Features (20 total)
 
 | Category | Features |
 |----------|----------|
@@ -181,6 +200,7 @@ The pipeline performs these steps:
 | Momentum (3) | stoch, rsi, cci |
 | Price Relative (4) | close_dema, close_vwap, bband_up_close, close_bband_down |
 | Volume (2) | adl_diffs2, obv_diffs2 |
+| Regime (1) | regime_encoded (0=TRENDING_UP, 1=TRENDING_DOWN, 2=HIGH_VOLATILITY, 3=RANGING) |
 
 ### Prepare training data
 
@@ -206,8 +226,8 @@ eval_closes = data['eval']['closes']
 
 ### Sequence Format
 
-Each state is a sliding window of 12 hourly timesteps with 19 features:
-- Shape: `(num_samples, 12, 19)`
+Each state is a sliding window of 12 hourly timesteps with 20 features:
+- Shape: `(num_samples, 12, 20)`
 - Used as input to the Conv1D neural network
 
 ---
