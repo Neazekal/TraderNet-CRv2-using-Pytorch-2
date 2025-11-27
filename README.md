@@ -53,7 +53,7 @@ tradernet-pytorch/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/yourusername/TraderNet-CRv2-using-Pytorch-2.git
+git clone https://github.com/Neazekal/TraderNet-CRv2-using-Pytorch-2.git
 cd TraderNet-CRv2-using-Pytorch-2
 ```
 
