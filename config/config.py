@@ -92,9 +92,9 @@ USE_ISOLATED_MARGIN = True      # Isolated margin (max loss = position margin on
 # =============================================================================
 # Feature Engineering
 # =============================================================================
-NUM_FEATURES = 20  # 19 features + regime
+NUM_FEATURES = 28  # 19 base features + regime + 8 funding features
 
-# Feature list (19 features + regime)
+# Feature list (19 features + regime + 8 funding)
 FEATURES = [
     # Log returns (5)
     'open_log_returns', 'high_log_returns', 'low_log_returns',
@@ -110,8 +110,13 @@ FEATURES = [
     # Technical indicators - Volume (2)
     'adl_diffs2', 'obv_diffs2',
     # Market regime (1) - encoded as 0-3
-    'regime_encoded'
+    'regime_encoded',
+    # Funding rate (1) - raw funding rate is already meaningful
+    'funding_rate'
 ]
+
+# Funding feature columns
+FUNDING_FEATURES = ['funding_rate']
 
 # Technical indicator window parameters
 TA_PARAMS = {
@@ -139,6 +144,14 @@ REGIME_PARAMS = {
     'trend_window': 50,                # SMA period for trend direction
     'adx_threshold': 25,               # ADX above this = strong trend
     'lookback_for_percentiles': 720,   # 30 days for adaptive thresholds
+}
+
+# =============================================================================
+# Funding Rate Parameters
+# =============================================================================
+FUNDING_PARAMS = {
+    'lookback_periods': 21,             # Rolling window for funding stats (7 days of 8h data)
+    'high_funding_threshold': 0.001,    # 0.1% per 8h = extreme funding
 }
 
 # =============================================================================
@@ -219,4 +232,4 @@ LOG_DIR = 'logs/'
 # Derived Constants (computed from above)
 # =============================================================================
 # Observation shape for neural network input
-OBS_SHAPE = (SEQUENCE_LENGTH, NUM_FEATURES)  # (12, 19)
+OBS_SHAPE = (SEQUENCE_LENGTH, NUM_FEATURES)  # (12, 28)
