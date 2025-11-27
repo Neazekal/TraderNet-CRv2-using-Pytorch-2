@@ -12,6 +12,14 @@ from datetime import datetime
 from pathlib import Path
 from tqdm import tqdm
 
+import sys
+sys.path.append(str(Path(__file__).parent.parent.parent))
+
+from config.config import (
+    RATE_LIMIT_MS, MARKET_TYPE, CANDLES_PER_REQUEST, 
+    DOWNLOAD_SLEEP, SUPPORTED_CRYPTOS, TIMEFRAME
+)
+
 
 class BinanceDownloader:
     """
@@ -44,11 +52,10 @@ class BinanceDownloader:
         # Binance Futures rate limit: 2400 weight/min
         # fetch_ohlcv uses ~5 weight per call
         # Safe: 2400/5 = 480 calls/min = 8 calls/sec = 125ms between calls
-        # Using 100ms (rateLimit) for CCXT's built-in throttling
         self.exchange = ccxt.binance({
             'enableRateLimit': True,
-            'rateLimit': 100,  # ms between requests (CCXT handles this)
-            'options': {'defaultType': 'future'}  # Use USDT-M Futures
+            'rateLimit': RATE_LIMIT_MS,
+            'options': {'defaultType': MARKET_TYPE}
         })
         self.data: pd.DataFrame = pd.DataFrame()
         
@@ -73,8 +80,8 @@ class BinanceDownloader:
         self, 
         start_date: str, 
         end_date: str = None,
-        limit_per_request: int = 1000,
-        sleep_seconds: float = 0.1
+        limit_per_request: int = CANDLES_PER_REQUEST,
+        sleep_seconds: float = DOWNLOAD_SLEEP
     ) -> pd.DataFrame:
         """
         Download OHLCV data between dates.
@@ -239,10 +246,6 @@ def download_all_cryptos(
 
 if __name__ == '__main__':
     # Example usage
-    import sys
-    sys.path.append(str(Path(__file__).parent.parent.parent))
-    from config.config import SUPPORTED_CRYPTOS
-    
     # Download single crypto
     # downloader = BinanceDownloader('BTC/USDT')
     # downloader.download(start_date='2023-01-01')

@@ -2,9 +2,13 @@
 TraderNet-CRv2 PyTorch Configuration
 
 Contains all hyperparameters, supported cryptocurrencies, and settings.
+Centralized configuration for the entire project.
 """
 
-# Supported cryptocurrencies (Binance USDT-M Futures)
+# =============================================================================
+# Supported Cryptocurrencies
+# =============================================================================
+# Binance USDT-M Futures pairs
 # Start years based on Binance Futures listing dates (Futures launched Sep 2019)
 SUPPORTED_CRYPTOS = {
     'BTC': {'symbol': 'BTC/USDT', 'start_year': 2019},   # Futures launched Sep 2019
@@ -16,13 +20,36 @@ SUPPORTED_CRYPTOS = {
     'DOGE': {'symbol': 'DOGE/USDT', 'start_year': 2021}, # Futures listed Apr 2021
 }
 
-# Data settings
-TIMEFRAME = '1h'
-SEQUENCE_LENGTH = 12      # N previous hours for state
-HORIZON = 20              # K hours lookahead for reward
-FEES = 0.01               # 1% transaction fee
+# =============================================================================
+# Data Download Settings
+# =============================================================================
+EXCHANGE = 'binance'
+MARKET_TYPE = 'future'          # 'spot' or 'future'
+TIMEFRAME = '1h'                # Candle timeframe
+RATE_LIMIT_MS = 100             # Milliseconds between API requests
+DOWNLOAD_SLEEP = 0.1            # Additional sleep between batches (seconds)
+CANDLES_PER_REQUEST = 1000      # Max candles per API request
 
-# Feature list (19 features)
+# =============================================================================
+# Environment Settings
+# =============================================================================
+SEQUENCE_LENGTH = 12            # N previous hours for state observation
+HORIZON = 20                    # K hours lookahead for reward calculation
+FEES = 0.01                     # Transaction fee (1% = 0.01)
+
+# Action space
+NUM_ACTIONS = 3
+ACTION_BUY = 0
+ACTION_SELL = 1
+ACTION_HOLD = 2
+ACTION_NAMES = {0: 'BUY', 1: 'SELL', 2: 'HOLD'}
+
+# =============================================================================
+# Feature Engineering
+# =============================================================================
+NUM_FEATURES = 19
+
+# Feature list (19 features total)
 FEATURES = [
     # Log returns (5)
     'open_log_returns', 'high_log_returns', 'low_log_returns',
@@ -54,33 +81,75 @@ TA_PARAMS = {
     'bbands_window': 20,
 }
 
-# PPO hyperparameters
+# =============================================================================
+# Reward Function Settings
+# =============================================================================
+# Smurf agent parameters
+SMURF_HOLD_REWARD = 0.0055      # Fixed positive reward for HOLD in Smurf
+
+# Reward types
+REWARD_MARKET_LIMIT = 'market_limit'
+REWARD_SMURF = 'smurf'
+
+# =============================================================================
+# Safety Mechanisms
+# =============================================================================
+# N-Consecutive rule: require N consecutive same actions before executing
+N_CONSECUTIVE_WINDOW = 2
+
+# =============================================================================
+# PPO Hyperparameters
+# =============================================================================
 PPO_PARAMS = {
     'learning_rate': 0.0005,
     'epsilon_clip': 0.3,
-    'gamma': 0.99,
-    'gae_lambda': 0.95,
-    'num_epochs': 40,
+    'gamma': 0.99,              # Discount factor
+    'gae_lambda': 0.95,         # GAE lambda for advantage estimation
+    'num_epochs': 40,           # PPO epochs per update
     'batch_size': 128,
+    'value_loss_coef': 0.5,     # Value loss coefficient
+    'entropy_coef': 0.01,       # Entropy bonus coefficient
+    'max_grad_norm': 0.5,       # Gradient clipping
 }
 
-# Network architecture
+# =============================================================================
+# Network Architecture
+# =============================================================================
 NETWORK_PARAMS = {
     'conv_filters': 32,
     'conv_kernel': 3,
     'fc_layers': [256, 256],
     'activation': 'gelu',
+    'dropout': 0.0,             # Dropout rate (0 = no dropout)
 }
 
-# Smurf parameters
-SMURF_HOLD_REWARD = 0.0055
+# =============================================================================
+# Training Settings
+# =============================================================================
+TRAINING_PARAMS = {
+    'total_timesteps': 1_000_000,   # Total training steps
+    'eval_freq': 10_000,            # Evaluate every N steps
+    'save_freq': 50_000,            # Save checkpoint every N steps
+    'log_freq': 1000,               # Log metrics every N steps
+    'seed': 42,                     # Random seed for reproducibility
+}
 
-# N-Consecutive parameters
-N_CONSECUTIVE_WINDOW = 2
+# =============================================================================
+# Evaluation Settings
+# =============================================================================
+EVAL_HOURS = 2250               # ~3 months for evaluation (last N hours)
+EVAL_EPISODES = 1               # Number of evaluation episodes
 
+# =============================================================================
 # Paths
+# =============================================================================
 DATA_DIR = 'data/storage/'
+DATASET_DIR = 'data/datasets/'
 CHECKPOINT_DIR = 'checkpoints/'
+LOG_DIR = 'logs/'
 
-# Evaluation settings
-EVAL_HOURS = 2250  # ~3 months for evaluation
+# =============================================================================
+# Derived Constants (computed from above)
+# =============================================================================
+# Observation shape for neural network input
+OBS_SHAPE = (SEQUENCE_LENGTH, NUM_FEATURES)  # (12, 19)

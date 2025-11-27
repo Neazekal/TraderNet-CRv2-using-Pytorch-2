@@ -23,7 +23,7 @@ Original TensorFlow implementation: [kochlisGit/TraderNet-CRv2](https://github.c
 ```
 tradernet-pytorch/
 ├── config/
-│   └── config.py              # Hyperparameters & crypto configs
+│   └── config.py              # Centralized hyperparameters & settings
 ├── data/
 │   ├── downloaders/
 │   │   └── binance.py         # CCXT Binance Futures downloader
@@ -37,10 +37,15 @@ tradernet-pytorch/
 ├── analysis/
 │   └── technical/
 │       └── indicators_calc.py # Technical indicator calculations
-├── environments/              # (Phase 3) Trading environment
-├── agents/                    # (Phase 3+) PPO agent & networks
-├── rules/                     # (Phase 3+) N-Consecutive & Smurf
-├── metrics/                   # (Phase 3+) Trading metrics
+├── environments/
+│   ├── trading_env.py         # Gymnasium trading environment
+│   └── rewards/
+│       ├── base.py            # Base reward class
+│       ├── market_limit.py    # MarketLimitOrder reward
+│       └── smurf.py           # Smurf conservative reward
+├── agents/                    # (Phase 4+) PPO agent & networks
+├── rules/                     # (Phase 4+) N-Consecutive & Smurf
+├── metrics/                   # (Phase 4+) Trading metrics
 ├── checkpoints/               # Model checkpoints (gitignored)
 ├── IMPLEMENTATION_PLAN.md     # Detailed implementation plan
 └── requirements.txt           # Python dependencies
@@ -203,18 +208,110 @@ Each state is a sliding window of 12 hourly timesteps with 19 features:
 
 ---
 
-## ⚙️ Configuration
+## 🎮 Phase 3: Trading Environment
 
-All hyperparameters are in `config/config.py`:
+Gymnasium-compatible trading environment for reinforcement learning.
+
+### Create environment from processed data
 
 ```python
-# Data settings
-TIMEFRAME = '1h'
-SEQUENCE_LENGTH = 12      # State window size
-HORIZON = 20              # Reward lookahead
-FEES = 0.01               # 1% transaction fee
+from environments.trading_env import create_trading_env
 
-# PPO hyperparameters
+# Create environment with MarketLimitOrder reward
+env = create_trading_env('data/datasets/BTC_processed.csv', reward_type='market_limit')
+
+# Or with Smurf reward (conservative)
+env_smurf = create_trading_env('data/datasets/BTC_processed.csv', reward_type='smurf')
+```
+
+### Environment details
+
+```python
+print(env.observation_space)  # Box(0.0, 1.0, (12, 19), float32)
+print(env.action_space)       # Discrete(3) - BUY=0, SELL=1, HOLD=2
+print(env.episode_length)     # ~52,000 steps for BTC
+```
+
+### Run an episode
+
+```python
+obs, info = env.reset()
+
+total_reward = 0
+while True:
+    action = env.action_space.sample()  # Random action (replace with agent)
+    obs, reward, terminated, truncated, info = env.step(action)
+    total_reward += reward
+    
+    if terminated:
+        break
+
+print(f"Episode reward: {total_reward:.4f}")
+print(f"Action distribution: {env.get_action_distribution()}")
+```
+
+### Manual environment creation
+
+```python
+from data.datasets.utils import prepare_training_data
+from environments.trading_env import TradingEnv
+
+# Load data
+data = prepare_training_data('data/datasets/BTC_processed.csv')
+
+# Create environment
+env = TradingEnv(
+    sequences=data['train']['sequences'],
+    highs=data['train']['highs'],
+    lows=data['train']['lows'],
+    closes=data['train']['closes']
+)
+```
+
+### Reward Functions
+
+| Type | HOLD Reward | Use Case |
+|------|-------------|----------|
+| `market_limit` | Negative (penalize inaction) | Main TraderNet agent |
+| `smurf` | +0.0055 (encourage holding) | Conservative Smurf agent |
+
+**MarketLimitOrder Reward:**
+```
+BUY:  log(max_high_in_horizon / close) + fee_adjustment
+SELL: log(close / min_low_in_horizon) + fee_adjustment
+HOLD: -max(buy_reward, sell_reward), capped at 0
+```
+
+**Smurf Reward:**
+- Same BUY/SELL as MarketLimitOrder
+- HOLD = fixed +0.0055 (encourages conservative behavior)
+
+---
+
+## ⚙️ Configuration
+
+All hyperparameters are centralized in `config/config.py`:
+
+```python
+# Data Download Settings
+EXCHANGE = 'binance'
+MARKET_TYPE = 'future'        # 'spot' or 'future'
+TIMEFRAME = '1h'
+
+# Environment Settings
+SEQUENCE_LENGTH = 12          # State window size (N hours)
+HORIZON = 20                  # Reward lookahead (K hours)
+FEES = 0.01                   # Transaction fee (1%)
+NUM_ACTIONS = 3               # BUY, SELL, HOLD
+
+# Feature Engineering
+NUM_FEATURES = 19
+OBS_SHAPE = (12, 19)          # Observation shape for neural network
+
+# Reward Settings
+SMURF_HOLD_REWARD = 0.0055    # Fixed HOLD reward for Smurf agent
+
+# PPO Hyperparameters
 PPO_PARAMS = {
     'learning_rate': 0.0005,
     'epsilon_clip': 0.3,
@@ -222,9 +319,12 @@ PPO_PARAMS = {
     'gae_lambda': 0.95,
     'num_epochs': 40,
     'batch_size': 128,
+    'value_loss_coef': 0.5,
+    'entropy_coef': 0.01,
+    'max_grad_norm': 0.5,
 }
 
-# Network architecture
+# Network Architecture
 NETWORK_PARAMS = {
     'conv_filters': 32,
     'conv_kernel': 3,
@@ -232,14 +332,18 @@ NETWORK_PARAMS = {
     'activation': 'gelu',
 }
 
-# Technical indicator windows
-TA_PARAMS = {
-    'dema_window': 15,
-    'rsi_window': 14,
-    'macd_short': 12,
-    'macd_long': 26,
-    # ... etc
+# Training Settings
+TRAINING_PARAMS = {
+    'total_timesteps': 1_000_000,
+    'eval_freq': 10_000,
+    'save_freq': 50_000,
+    'seed': 42,
 }
+
+# Paths
+DATA_DIR = 'data/storage/'
+DATASET_DIR = 'data/datasets/'
+CHECKPOINT_DIR = 'checkpoints/'
 ```
 
 ---
@@ -256,19 +360,32 @@ python -m data.downloaders.binance
 # 3. Process data (takes ~2-3 minutes)
 python -m data.datasets.builder
 
-# 4. Verify data is ready
+# 4. Test the trading environment
 python -c "
-from data.datasets.utils import prepare_training_data
-data = prepare_training_data('data/datasets/BTC_processed.csv')
-print(f'Train sequences: {data[\"train\"][\"sequences\"].shape}')
-print(f'Eval sequences: {data[\"eval\"][\"sequences\"].shape}')
+from environments.trading_env import create_trading_env
+
+env = create_trading_env('data/datasets/BTC_processed.csv')
+print(f'Observation space: {env.observation_space}')
+print(f'Action space: {env.action_space}')
+print(f'Episode length: {env.episode_length}')
+
+# Run a few steps
+obs, info = env.reset()
+for _ in range(10):
+    action = env.action_space.sample()
+    obs, reward, done, _, info = env.step(action)
+    print(f'Action: {info[\"action\"]}, Reward: {reward:.4f}')
 "
 ```
 
 Expected output:
 ```
-Train sequences: (52221, 12, 19)
-Eval sequences: (2239, 12, 19)
+Observation space: Box(0.0, 1.0, (12, 19), float32)
+Action space: Discrete(3)
+Episode length: 54451
+Action: HOLD, Reward: -0.0155
+Action: BUY, Reward: 0.0123
+...
 ```
 
 ---
@@ -277,7 +394,7 @@ Eval sequences: (2239, 12, 19)
 
 - [x] **Phase 1**: Project setup & Binance data downloader
 - [x] **Phase 2**: Technical analysis & preprocessing pipeline
-- [ ] **Phase 3**: Trading environment & reward functions
+- [x] **Phase 3**: Trading environment & reward functions
 - [ ] **Phase 4**: Neural networks (Actor/Critic)
 - [ ] **Phase 5**: PPO agent implementation
 - [ ] **Phase 6**: Safety mechanisms (N-Consecutive, Smurf)
