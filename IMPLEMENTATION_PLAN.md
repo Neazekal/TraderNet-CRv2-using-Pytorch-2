@@ -39,7 +39,6 @@ tradernet_pytorch/
 │   ├── ppo.py                 # PPO agent
 │   └── buffers.py             # Rollout buffer
 ├── rules/
-│   ├── nconsecutive.py        # N-Consecutive filter
 │   └── smurfing.py            # Smurf integration wrapper
 ├── metrics/
 │   └── trading/
@@ -392,8 +391,8 @@ loss = policy_loss + 0.5 * value_loss
 
 ## Phase 6: Metrics & Evaluation
 
-(NOTE: N-Consecutive rule removed - not needed with new position-based action policy
-where LONG->LONG holds position, LONG->SHORT flips immediately, etc.)
+(NOTE: Actions are executed immediately with position-based policy:
+LONG->LONG holds position, LONG->SHORT flips immediately, etc.)
 
 ### 6.1 Trading Metrics
 
@@ -449,9 +448,8 @@ class MaximumDrawdown(Metric):
 
 ### 7.3 Integrated Evaluation
 1. Load TraderNet and Smurf checkpoints
-2. Initialize N-Consecutive filter (window=2 or 3)
-3. Run integrated policy on evaluation set
-4. Compute all trading metrics
+2. Run integrated policy on evaluation set
+3. Compute all trading metrics
 
 ### 7.4 Supported Cryptocurrencies
 ```python
@@ -483,11 +481,10 @@ supported_cryptos = {
 | 5 | Reward functions | High | Low |
 | 6 | Actor/Critic networks | High | Medium |
 | 7 | PPO agent | High | High |
-| 8 | N-Consecutive rule | Medium | Low |
-| 9 | Smurf mechanism | Medium | Low |
-| 10 | Metrics | Medium | Low |
-| 11 | Training script | High | Medium |
-| 12 | Evaluation script | Medium | Medium |
+| 8 | Smurf mechanism | Medium | Low |
+| 9 | Metrics | Medium | Low |
+| 10 | Training script | High | Medium |
+| 11 | Evaluation script | Medium | Medium |
 
 ---
 
