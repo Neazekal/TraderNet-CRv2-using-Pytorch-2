@@ -89,6 +89,12 @@ STOP_LOSS = 0.02                # 2% stop-loss (auto-close on loss)
 TAKE_PROFIT = 0.04              # 4% take-profit (auto-close on profit)
 USE_ISOLATED_MARGIN = True      # Isolated margin (max loss = position margin only)
 
+# Slippage Settings (simulates market impact and execution delays)
+SLIPPAGE_ENABLED = True         # Enable random slippage simulation
+SLIPPAGE_MEAN = 0.0001          # Mean slippage (0.01% = 1 bps)
+SLIPPAGE_STD = 0.0002           # Slippage std deviation (0.02% = 2 bps)
+SLIPPAGE_MAX = 0.001            # Maximum slippage cap (0.1% = 10 bps)
+
 # =============================================================================
 # Feature Engineering
 # =============================================================================

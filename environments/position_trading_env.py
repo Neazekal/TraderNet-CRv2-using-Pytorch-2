@@ -34,7 +34,8 @@ from config.config import (
     STOP_LOSS, TAKE_PROFIT,
     DRAWDOWN_PENALTY_ENABLED, DRAWDOWN_PENALTY_THRESHOLD,
     DRAWDOWN_PENALTY_SCALE, DRAWDOWN_PENALTY_MAX,
-    FUNDING_FEE_ENABLED
+    FUNDING_FEE_ENABLED,
+    SLIPPAGE_ENABLED, SLIPPAGE_MEAN, SLIPPAGE_STD, SLIPPAGE_MAX
 )
 
 
@@ -149,6 +150,10 @@ class PositionTradingEnv(gym.Env):
         drawdown_penalty_scale: float = DRAWDOWN_PENALTY_SCALE,
         drawdown_penalty_max: float = DRAWDOWN_PENALTY_MAX,
         funding_fee_enabled: bool = FUNDING_FEE_ENABLED,
+        slippage_enabled: bool = SLIPPAGE_ENABLED,
+        slippage_mean: float = SLIPPAGE_MEAN,
+        slippage_std: float = SLIPPAGE_STD,
+        slippage_max: float = SLIPPAGE_MAX,
         render_mode: Optional[str] = None
     ):
         """
@@ -173,6 +178,10 @@ class PositionTradingEnv(gym.Env):
             drawdown_penalty_scale: Penalty multiplier (default: 0.5)
             drawdown_penalty_max: Maximum penalty per step (default: 0.1)
             funding_fee_enabled: Whether to apply funding fees when holding positions (default: True)
+            slippage_enabled: Whether to apply random slippage on entry/exit (default: True)
+            slippage_mean: Mean slippage percentage (default: 0.01% = 1 bps)
+            slippage_std: Slippage standard deviation (default: 0.02% = 2 bps)
+            slippage_max: Maximum slippage cap (default: 0.1% = 10 bps)
             render_mode: Rendering mode ('human' or None)
         """
         super().__init__()
@@ -206,6 +215,12 @@ class PositionTradingEnv(gym.Env):
         self.drawdown_penalty_threshold = drawdown_penalty_threshold
         self.drawdown_penalty_scale = drawdown_penalty_scale
         self.drawdown_penalty_max = drawdown_penalty_max
+        
+        # Slippage parameters
+        self.slippage_enabled = slippage_enabled
+        self.slippage_mean = slippage_mean
+        self.slippage_std = slippage_std
+        self.slippage_max = slippage_max
         
         # Data dimensions
         self.num_samples, self.seq_length, self.num_features = sequences.shape
@@ -259,6 +274,7 @@ class PositionTradingEnv(gym.Env):
         self.max_drawdown = 0.0
         self.peak_equity = self.initial_capital
         self.total_drawdown_penalty = 0.0  # Total drawdown penalty accumulated
+        self.total_slippage_cost = 0.0     # Total slippage cost accumulated
         self.action_history = []
         self.trade_history = []
         
@@ -334,6 +350,46 @@ class PositionTradingEnv(gym.Env):
         funding_fee = -self.position * funding_rate * self.position_size
         
         return funding_fee
+    
+    def _apply_slippage(self, price: float, is_entry: bool, position_type: int) -> Tuple[float, float]:
+        """
+        Apply random slippage to execution price.
+        
+        Slippage simulates market impact and execution delays in real trading.
+        It always works against the trader:
+        - Entry LONG: price goes UP (buy higher)
+        - Entry SHORT: price goes DOWN (sell lower)
+        - Exit LONG: price goes DOWN (sell lower)
+        - Exit SHORT: price goes UP (buy higher)
+        
+        Args:
+            price: Base execution price
+            is_entry: True if opening position, False if closing
+            position_type: LONG (+1) or SHORT (-1)
+            
+        Returns:
+            Tuple of (adjusted_price, slippage_cost_percentage)
+        """
+        if not self.slippage_enabled:
+            return price, 0.0
+        
+        # Generate random slippage (always positive, then apply direction)
+        slippage = abs(np.random.normal(self.slippage_mean, self.slippage_std))
+        slippage = min(slippage, self.slippage_max)  # Cap at max
+        
+        # Determine direction: slippage always works against trader
+        # Entry LONG: +slippage (buy higher), Exit LONG: -slippage (sell lower)
+        # Entry SHORT: -slippage (sell lower), Exit SHORT: +slippage (buy higher)
+        if is_entry:
+            # Entry: LONG buys higher (+), SHORT sells lower (-)
+            direction = position_type  # +1 for LONG, -1 for SHORT
+        else:
+            # Exit: LONG sells lower (-), SHORT buys higher (+)
+            direction = -position_type  # -1 for LONG, +1 for SHORT
+        
+        adjusted_price = price * (1 + direction * slippage)
+        
+        return adjusted_price, slippage
     
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """
@@ -510,16 +566,27 @@ class PositionTradingEnv(gym.Env):
         
         return None
     
-    def _open_position(self, position_type: int, price: float) -> None:
+    def _open_position(self, position_type: int, price: float) -> float:
         """
         Open a new position (LONG or SHORT) with SL/TP levels.
         
         Position size is calculated based on risk per trade:
         - With isolated margin, max loss = risk_per_trade * balance
         - Position size = (balance * risk_per_trade / stop_loss) * leverage
+        
+        Args:
+            position_type: LONG (+1) or SHORT (-1)
+            price: Base execution price (before slippage)
+            
+        Returns:
+            Slippage cost as percentage
         """
+        # Apply slippage to entry price
+        adjusted_price, slippage = self._apply_slippage(price, is_entry=True, position_type=position_type)
+        self.total_slippage_cost += slippage
+        
         self.position = position_type
-        self.entry_price = price
+        self.entry_price = adjusted_price
         self.entry_step = self.current_step
         
         # Reset funding for new trade
@@ -533,15 +600,17 @@ class PositionTradingEnv(gym.Env):
         max_size = self.balance * self.max_position_size * self.leverage
         
         self.position_size = min(leveraged_size, max_size)
-        self.position_quantity = self.position_size / price
+        self.position_quantity = self.position_size / adjusted_price
         
-        # Set SL/TP prices
+        # Set SL/TP prices (based on adjusted entry price)
         if position_type == self.LONG:
-            self.sl_price = price * (1 - self.stop_loss)
-            self.tp_price = price * (1 + self.take_profit)
+            self.sl_price = adjusted_price * (1 - self.stop_loss)
+            self.tp_price = adjusted_price * (1 + self.take_profit)
         else:  # SHORT
-            self.sl_price = price * (1 + self.stop_loss)
-            self.tp_price = price * (1 - self.take_profit)
+            self.sl_price = adjusted_price * (1 + self.stop_loss)
+            self.tp_price = adjusted_price * (1 - self.take_profit)
+        
+        return slippage
     
     def _close_position(self, exit_price: float, exit_reason: str = EXIT_MANUAL) -> Tuple[float, float]:
         """
@@ -550,15 +619,25 @@ class PositionTradingEnv(gym.Env):
         Uses unified P&L calculation with position direction:
         P&L = position * log(exit_price / entry_price) - 2 * fees
         
+        Slippage is applied to manual closes and flips (not SL/TP which use exact prices).
+        
         Args:
             exit_price: Price at which position is closed
-            exit_reason: Reason for closing (manual, stop_loss, take_profit, end_episode)
+            exit_reason: Reason for closing (manual, stop_loss, take_profit, flip, end_episode)
         
         Returns:
             Tuple of (log_return, pnl_dollars)
         """
-        # Use unified calculation with position direction
-        log_return = self._calculate_pnl(exit_price)
+        # Apply slippage only for manual closes, flips, and end of episode
+        # SL/TP trigger at exact prices, no additional slippage
+        if exit_reason in [self.EXIT_MANUAL, self.EXIT_FLIP, self.EXIT_END_EPISODE]:
+            adjusted_price, slippage = self._apply_slippage(exit_price, is_entry=False, position_type=self.position)
+            self.total_slippage_cost += slippage
+        else:
+            adjusted_price = exit_price
+        
+        # Use unified calculation with position direction (using adjusted price)
+        log_return = self._calculate_pnl(adjusted_price)
         
         # Convert log return to percentage return
         pct_return = np.exp(log_return) - 1
@@ -584,7 +663,7 @@ class PositionTradingEnv(gym.Env):
             self.POSITION_NAMES[self.position],  # 'LONG' or 'SHORT'
             log_return,
             pnl_dollars,
-            exit_price,
+            adjusted_price,  # Use adjusted price for record
             exit_reason
         )
         
@@ -667,6 +746,8 @@ class PositionTradingEnv(gym.Env):
             # Funding fee info
             'current_trade_funding': self.current_trade_funding,
             'total_funding_fees': self.total_funding_fees,
+            # Slippage info
+            'total_slippage_cost': self.total_slippage_cost,
             # Statistics
             'num_trades': self.num_trades,
             'win_rate': self.winning_trades / max(self.num_trades, 1),
@@ -833,6 +914,7 @@ class PositionTradingEnv(gym.Env):
                 print(f"Unrealized P&L: ${unrealized:,.2f} ({pct_return:.2%})")
             print(f"Realized P&L: ${self.realized_pnl_dollars:,.2f}")
             print(f"Total Funding Fees: ${self.total_funding_fees:,.2f}")
+            print(f"Total Slippage Cost: {self.total_slippage_cost:.4%}")
             print(f"ROI: {(self.balance - self.initial_capital) / self.initial_capital:.2%}")
             print(f"Trades: {self.num_trades} (Win rate: {self.winning_trades/max(self.num_trades,1):.1%})")
             print(f"Exits - SL: {self.sl_triggered_count} | TP: {self.tp_triggered_count} | Flip: {self.flip_count} | Manual: {self.manual_close_count}")
@@ -848,6 +930,7 @@ class PositionTradingEnv(gym.Env):
                 'total_pnl': 0.0,
                 'total_pnl_dollars': 0.0,
                 'total_funding_fees': self.total_funding_fees,
+                'total_slippage_cost': self.total_slippage_cost,
                 'avg_pnl': 0.0,
                 'avg_pnl_dollars': 0.0,
                 'avg_holding_period': 0.0,
@@ -872,6 +955,7 @@ class PositionTradingEnv(gym.Env):
             'total_pnl': self.realized_pnl,
             'total_pnl_dollars': self.realized_pnl_dollars,
             'total_funding_fees': self.total_funding_fees,
+            'total_slippage_cost': self.total_slippage_cost,
             'avg_funding_per_trade': np.mean(funding_fees),
             'avg_pnl': np.mean(pnls),
             'avg_pnl_dollars': np.mean(pnls_dollars),
@@ -973,7 +1057,7 @@ if __name__ == '__main__':
     highs = (prices * (1 + np.abs(np.random.normal(0, 0.003, num_samples)))).astype(np.float32)
     lows = (prices * (1 - np.abs(np.random.normal(0, 0.003, num_samples)))).astype(np.float32)
     
-    print("\nCreating environment with drawdown penalty...")
+    print("\nCreating environment with drawdown penalty and slippage...")
     env = PositionTradingEnv(
         sequences=sequences,
         highs=highs,
@@ -987,7 +1071,11 @@ if __name__ == '__main__':
         drawdown_penalty_enabled=True,
         drawdown_penalty_threshold=0.05,  # 5% threshold
         drawdown_penalty_scale=0.5,
-        drawdown_penalty_max=0.1
+        drawdown_penalty_max=0.1,
+        slippage_enabled=True,
+        slippage_mean=0.0001,   # 0.01% mean
+        slippage_std=0.0002,    # 0.02% std
+        slippage_max=0.001      # 0.1% max
     )
     
     print(f"Observation space: {env.observation_space}")
@@ -996,6 +1084,7 @@ if __name__ == '__main__':
     print(f"Position values: LONG(+1), SHORT(-1), FLAT(0)")
     print(f"Initial capital: ${env.initial_capital:,.2f}")
     print(f"Stop-Loss: {env.stop_loss:.1%} | Take-Profit: {env.take_profit:.1%}")
+    print(f"Slippage: mean={env.slippage_mean:.4%}, std={env.slippage_std:.4%}, max={env.slippage_max:.4%}")
     
     # Test instant flip
     print("\n--- Testing Instant Flip with New Position Values ---")
@@ -1054,6 +1143,7 @@ if __name__ == '__main__':
     print(f"  ROI: {stats['roi']:.2%}")
     print(f"  Max Drawdown: {stats['max_drawdown']:.2%}")
     print(f"  Total Drawdown Penalty: {stats['total_drawdown_penalty']:.4f}")
+    print(f"  Total Slippage Cost: {stats['total_slippage_cost']:.4%}")
     print(f"\nExit Breakdown:")
     print(f"  Stop-Loss: {stats['sl_triggered']}")
     print(f"  Take-Profit: {stats['tp_triggered']}")

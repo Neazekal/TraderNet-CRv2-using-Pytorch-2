@@ -397,6 +397,39 @@ This teaches the agent to:
 - Potentially close positions before unfavorable funding times
 - Factor in funding direction when choosing LONG vs SHORT
 
+### Random Slippage
+
+The environment simulates realistic order execution with random slippage:
+
+```python
+env = create_position_trading_env(
+    'data/datasets/BTC_processed.csv',
+    enable_slippage=True,           # Enable slippage simulation (default: True)
+    slippage_mean=0.0001,           # Mean slippage: 0.01% (1 bps)
+    slippage_std=0.00005            # Standard deviation: 0.005%
+)
+```
+
+**How it works**:
+- Slippage is sampled from a normal distribution: `N(mean, std)`
+- Applied when opening or closing positions (not during hold)
+- Always works against the trader (worse execution price)
+  - LONG entry: price slightly higher
+  - LONG exit: price slightly lower
+  - SHORT entry: price slightly lower
+  - SHORT exit: price slightly higher
+
+**Example**:
+- Entry price (market): $50,000
+- Slippage: 0.015% (sampled)
+- LONG actual entry: $50,000 x 1.00015 = $50,007.50
+
+**Why it matters**:
+- Real exchanges have order book depth and market impact
+- Large orders move the price against you
+- High-frequency strategies are more affected by slippage
+- Teaches agent that frequent trading has hidden costs
+
 ### Drawdown Penalty
 
 The environment applies a drawdown penalty to discourage excessive losses:
@@ -494,6 +527,7 @@ info = {
 | Leverage | No | Yes (configurable) |
 | Stop-Loss/Take-Profit | No | Yes (auto-trigger) |
 | Funding fee | No | Yes (8-hour intervals) |
+| Random slippage | No | Yes (configurable) |
 | Instant flip | N/A | Yes (LONG to SHORT) |
 | Rewards | Potential profit | Actual P&L on close |
 | Fees | Once per step | On open + close |
@@ -554,6 +588,13 @@ TRADING_PARAMS = {
 DRAWDOWN_PARAMS = {
     'drawdown_penalty_threshold': 0.1,   # Start penalizing at 10% drawdown
     'drawdown_penalty_factor': 0.5,      # Penalty multiplier
+}
+
+# Slippage Settings
+SLIPPAGE_PARAMS = {
+    'enable_slippage': True,             # Enable random slippage
+    'slippage_mean': 0.0001,             # Mean slippage: 0.01% (1 bps)
+    'slippage_std': 0.00005,             # Standard deviation: 0.005%
 }
 
 # PPO Hyperparameters
