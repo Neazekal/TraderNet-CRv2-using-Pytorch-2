@@ -35,7 +35,7 @@ CANDLES_PER_REQUEST = 1000      # Max candles per API request
 # =============================================================================
 SEQUENCE_LENGTH = 12            # N previous hours for state observation
 HORIZON = 20                    # K hours lookahead for reward calculation
-FEES = 0.01                     # Transaction fee (1% = 0.01)
+FEES = 0.001                    # Transaction fee (0.1% = 0.001 for Binance Futures)
 
 # Action space
 NUM_ACTIONS = 3
@@ -43,6 +43,14 @@ ACTION_BUY = 0
 ACTION_SELL = 1
 ACTION_HOLD = 2
 ACTION_NAMES = {0: 'BUY', 1: 'SELL', 2: 'HOLD'}
+
+# =============================================================================
+# Capital Management (Position Trading)
+# =============================================================================
+INITIAL_CAPITAL = 10000.0       # Starting capital in USDT
+RISK_PER_TRADE = 0.02           # Risk 2% of capital per trade
+LEVERAGE = 10                   # Leverage multiplier (1 = no leverage, 10 = 10x)
+MAX_POSITION_SIZE = 0.5         # Max 50% of capital in single position
 
 # =============================================================================
 # Feature Engineering

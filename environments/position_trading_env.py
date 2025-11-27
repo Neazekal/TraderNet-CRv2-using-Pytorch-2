@@ -1,12 +1,17 @@
 """
 Position-Based Trading Environment Module.
 
-A more realistic trading environment that tracks positions:
+A more realistic trading environment that tracks positions with capital management:
 - FLAT: No position open
 - LONG: Bought, waiting to sell
 - SHORT: Sold, waiting to buy back
 
-This simulates real trading where you must close a position to realize profit/loss.
+Features:
+- Position tracking (FLAT/LONG/SHORT)
+- Capital management (balance, position sizing)
+- Leverage support for futures trading
+- Risk per trade control
+- Actual P&L in both percentage and dollar amounts
 """
 
 import gymnasium as gym
@@ -19,17 +24,22 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from config.config import (
-    FEATURES, SEQUENCE_LENGTH, HORIZON, FEES,
-    NUM_ACTIONS, ACTION_BUY, ACTION_SELL, ACTION_HOLD, ACTION_NAMES
+    FEATURES, SEQUENCE_LENGTH, FEES,
+    NUM_ACTIONS, ACTION_BUY, ACTION_SELL, ACTION_HOLD, ACTION_NAMES,
+    INITIAL_CAPITAL, RISK_PER_TRADE, LEVERAGE, MAX_POSITION_SIZE
 )
 
 
 class PositionTradingEnv(gym.Env):
     """
-    Position-based trading environment for realistic trading simulation.
+    Position-based trading environment with capital management.
     
-    Unlike TradingEnv which treats each step independently, this environment
-    tracks open positions and calculates actual P&L when positions are closed.
+    Simulates realistic futures/spot trading with:
+    - Position tracking (FLAT/LONG/SHORT)
+    - Capital and balance management
+    - Leverage support
+    - Risk-based position sizing
+    - Actual P&L calculation in dollars
     
     Position States:
         FLAT (0):  No position - can open LONG or SHORT
@@ -41,26 +51,32 @@ class PositionTradingEnv(gym.Env):
         SELL (1): Open SHORT (if FLAT) or Close LONG (if LONG)
         HOLD (2): Maintain current position
     
+    Capital Management:
+        - initial_capital: Starting balance (default: $10,000)
+        - risk_per_trade: % of capital to risk per trade (default: 2%)
+        - leverage: Position multiplier for futures (default: 10x)
+        - Position size = (capital * risk_per_trade) * leverage
+    
     Rewards:
-        - Opening position: 0 (or small negative for fees)
-        - Holding position: unrealized P&L (optional) or 0
-        - Closing position: realized P&L with fees
+        - Returns log returns for RL training (scale-invariant)
+        - info dict contains actual dollar P&L
     
     Example:
-        env = PositionTradingEnv(sequences, highs, lows, closes)
+        env = PositionTradingEnv(
+            sequences, highs, lows, closes,
+            initial_capital=10000,
+            risk_per_trade=0.02,
+            leverage=10
+        )
         obs, info = env.reset()
+        print(info['balance'])  # $10,000
         
-        # Open long position
         obs, reward, _, _, info = env.step(0)  # BUY
-        print(info['position'])  # 'LONG'
+        print(info['position_value'])  # $2,000 (2% * 10x leverage)
         
-        # Hold position
-        obs, reward, _, _, info = env.step(2)  # HOLD
-        print(info['unrealized_pnl'])  # Current unrealized P&L
-        
-        # Close position
-        obs, reward, _, _, info = env.step(1)  # SELL
-        print(reward)  # Realized profit/loss
+        obs, reward, _, _, info = env.step(1)  # SELL (close)
+        print(info['pnl_dollars'])  # Actual profit/loss
+        print(info['balance'])  # Updated balance
     """
     
     metadata = {'render_modes': ['human']}
@@ -83,8 +99,12 @@ class PositionTradingEnv(gym.Env):
         highs: np.ndarray,
         lows: np.ndarray,
         closes: np.ndarray,
+        initial_capital: float = INITIAL_CAPITAL,
+        risk_per_trade: float = RISK_PER_TRADE,
+        leverage: float = LEVERAGE,
+        max_position_size: float = MAX_POSITION_SIZE,
         fees: float = FEES,
-        reward_on_hold: str = 'zero',  # 'zero', 'unrealized', 'small_negative'
+        reward_on_hold: str = 'zero',
         render_mode: Optional[str] = None
     ):
         """
@@ -95,8 +115,12 @@ class PositionTradingEnv(gym.Env):
             highs: High prices aligned with sequences
             lows: Low prices aligned with sequences
             closes: Close prices aligned with sequences
-            fees: Transaction fee percentage (applied on open and close)
-            reward_on_hold: How to reward holding ('zero', 'unrealized', 'small_negative')
+            initial_capital: Starting capital in USDT (default: 10000)
+            risk_per_trade: Fraction of capital to risk per trade (default: 0.02 = 2%)
+            leverage: Leverage multiplier (default: 10 for futures)
+            max_position_size: Max fraction of capital for position (default: 0.5 = 50%)
+            fees: Transaction fee percentage per trade (default: 0.001 = 0.1%)
+            reward_on_hold: Reward type when holding ('zero', 'unrealized', 'small_negative')
             render_mode: Rendering mode ('human' or None)
         """
         super().__init__()
@@ -107,7 +131,11 @@ class PositionTradingEnv(gym.Env):
         self.lows = lows.astype(np.float32)
         self.closes = closes.astype(np.float32)
         
-        # Environment parameters
+        # Capital management parameters
+        self.initial_capital = initial_capital
+        self.risk_per_trade = risk_per_trade
+        self.leverage = leverage
+        self.max_position_size = max_position_size
         self.fees = fees
         self.reward_on_hold = reward_on_hold
         self.render_mode = render_mode
@@ -124,19 +152,35 @@ class PositionTradingEnv(gym.Env):
             dtype=np.float32
         )
         
-        self.action_space = spaces.Discrete(NUM_ACTIONS)  # BUY, SELL, HOLD
+        self.action_space = spaces.Discrete(NUM_ACTIONS)
         
-        # Position tracking (initialized in reset)
+        # Initialize state variables (will be reset in reset())
+        self._init_state_variables()
+    
+    def _init_state_variables(self) -> None:
+        """Initialize all state variables."""
+        # Step tracking
         self.current_step = 0
+        
+        # Position tracking
         self.position = self.FLAT
         self.entry_price = 0.0
         self.entry_step = 0
+        self.position_size = 0.0      # Size in USDT
+        self.position_quantity = 0.0  # Quantity of asset
+        
+        # Capital tracking
+        self.balance = self.initial_capital
+        self.equity = self.initial_capital  # Balance + unrealized P&L
         
         # Statistics tracking
         self.total_reward = 0.0
         self.realized_pnl = 0.0
+        self.realized_pnl_dollars = 0.0
         self.num_trades = 0
         self.winning_trades = 0
+        self.max_drawdown = 0.0
+        self.peak_equity = self.initial_capital
         self.action_history = []
         self.trade_history = []
         
@@ -157,19 +201,8 @@ class PositionTradingEnv(gym.Env):
         """
         super().reset(seed=seed)
         
-        # Reset position
-        self.current_step = 0
-        self.position = self.FLAT
-        self.entry_price = 0.0
-        self.entry_step = 0
-        
-        # Reset statistics
-        self.total_reward = 0.0
-        self.realized_pnl = 0.0
-        self.num_trades = 0
-        self.winning_trades = 0
-        self.action_history = []
-        self.trade_history = []
+        # Reset all state variables
+        self._init_state_variables()
         
         # Get initial observation
         observation = self._get_observation()
@@ -194,6 +227,7 @@ class PositionTradingEnv(gym.Env):
         
         current_price = self.closes[self.current_step]
         reward = 0.0
+        pnl_dollars = 0.0
         trade_closed = False
         
         # Process action based on current position
@@ -201,16 +235,12 @@ class PositionTradingEnv(gym.Env):
             # No position - can open LONG or SHORT
             if action == self.BUY:
                 # Open LONG position
-                self.position = self.LONG
-                self.entry_price = current_price
-                self.entry_step = self.current_step
-                reward = 0.0  # No reward on open (fees deducted on close)
+                self._open_position(self.LONG, current_price)
+                reward = 0.0
                 
             elif action == self.SELL:
                 # Open SHORT position
-                self.position = self.SHORT
-                self.entry_price = current_price
-                self.entry_step = self.current_step
+                self._open_position(self.SHORT, current_price)
                 reward = 0.0
                 
             else:  # HOLD
@@ -220,11 +250,8 @@ class PositionTradingEnv(gym.Env):
             # Holding LONG - can HOLD or SELL to close
             if action == self.SELL:
                 # Close LONG position
-                reward = self._calculate_long_pnl(current_price)
+                reward, pnl_dollars = self._close_position(current_price)
                 trade_closed = True
-                self._record_trade('LONG', reward)
-                self.position = self.FLAT
-                self.entry_price = 0.0
                 
             elif action == self.BUY:
                 # Already LONG, treat as HOLD
@@ -237,11 +264,8 @@ class PositionTradingEnv(gym.Env):
             # Holding SHORT - can HOLD or BUY to close
             if action == self.BUY:
                 # Close SHORT position
-                reward = self._calculate_short_pnl(current_price)
+                reward, pnl_dollars = self._close_position(current_price)
                 trade_closed = True
-                self._record_trade('SHORT', reward)
-                self.position = self.FLAT
-                self.entry_price = 0.0
                 
             elif action == self.SELL:
                 # Already SHORT, treat as HOLD
@@ -249,6 +273,9 @@ class PositionTradingEnv(gym.Env):
                 
             else:  # HOLD
                 reward = self._get_hold_reward(current_price)
+        
+        # Update equity (balance + unrealized P&L)
+        self._update_equity(current_price)
         
         # Update tracking
         self.total_reward += reward
@@ -264,14 +291,8 @@ class PositionTradingEnv(gym.Env):
         # Force close position at end of episode
         if terminated and self.position != self.FLAT:
             final_price = self.closes[min(self.current_step, len(self.closes) - 1)]
-            if self.position == self.LONG:
-                final_reward = self._calculate_long_pnl(final_price)
-                self._record_trade('LONG', final_reward)
-            else:  # SHORT
-                final_reward = self._calculate_short_pnl(final_price)
-                self._record_trade('SHORT', final_reward)
+            final_reward, final_pnl_dollars = self._close_position(final_price)
             self.total_reward += final_reward
-            self.position = self.FLAT
         
         # Get next observation
         if terminated:
@@ -282,9 +303,89 @@ class PositionTradingEnv(gym.Env):
         info = self._get_info()
         info['action'] = self.ACTION_NAMES[action]
         info['reward'] = reward
+        info['pnl_dollars'] = pnl_dollars
         info['trade_closed'] = trade_closed
         
         return observation, reward, terminated, truncated, info
+    
+    def _open_position(self, position_type: int, price: float) -> None:
+        """
+        Open a new position (LONG or SHORT).
+        
+        Position size is calculated as:
+        - Base size = balance * risk_per_trade
+        - With leverage = base_size * leverage
+        - Capped at max_position_size * balance
+        """
+        self.position = position_type
+        self.entry_price = price
+        self.entry_step = self.current_step
+        
+        # Calculate position size
+        base_size = self.balance * self.risk_per_trade
+        leveraged_size = base_size * self.leverage
+        max_size = self.balance * self.max_position_size * self.leverage
+        
+        self.position_size = min(leveraged_size, max_size)
+        self.position_quantity = self.position_size / price
+    
+    def _close_position(self, exit_price: float) -> Tuple[float, float]:
+        """
+        Close current position and calculate P&L.
+        
+        Returns:
+            Tuple of (log_return, pnl_dollars)
+        """
+        if self.position == self.LONG:
+            log_return = self._calculate_long_pnl(exit_price)
+        else:  # SHORT
+            log_return = self._calculate_short_pnl(exit_price)
+        
+        # Convert log return to percentage return
+        pct_return = np.exp(log_return) - 1
+        
+        # Calculate dollar P&L
+        pnl_dollars = self.position_size * pct_return
+        
+        # Update balance
+        self.balance += pnl_dollars
+        
+        # Record trade
+        self._record_trade(
+            'LONG' if self.position == self.LONG else 'SHORT',
+            log_return,
+            pnl_dollars,
+            exit_price
+        )
+        
+        # Reset position
+        self.position = self.FLAT
+        self.entry_price = 0.0
+        self.position_size = 0.0
+        self.position_quantity = 0.0
+        
+        return log_return, pnl_dollars
+    
+    def _update_equity(self, current_price: float) -> None:
+        """Update equity (balance + unrealized P&L) and track drawdown."""
+        unrealized_pnl = 0.0
+        
+        if self.position == self.LONG:
+            pct_return = (current_price - self.entry_price) / self.entry_price
+            unrealized_pnl = self.position_size * pct_return
+        elif self.position == self.SHORT:
+            pct_return = (self.entry_price - current_price) / self.entry_price
+            unrealized_pnl = self.position_size * pct_return
+        
+        self.equity = self.balance + unrealized_pnl
+        
+        # Track peak and drawdown
+        if self.equity > self.peak_equity:
+            self.peak_equity = self.equity
+        
+        drawdown = (self.peak_equity - self.equity) / self.peak_equity
+        if drawdown > self.max_drawdown:
+            self.max_drawdown = drawdown
     
     def _get_observation(self) -> np.ndarray:
         """Get the current observation (state)."""
@@ -294,49 +395,64 @@ class PositionTradingEnv(gym.Env):
         """Get current info dictionary."""
         current_price = self.closes[min(self.current_step, len(self.closes) - 1)]
         
+        # Calculate unrealized P&L
+        unrealized_pnl = 0.0
+        unrealized_pnl_dollars = 0.0
+        
+        if self.position == self.LONG:
+            unrealized_pnl = self._calculate_long_pnl(current_price)
+            pct_return = (current_price - self.entry_price) / self.entry_price
+            unrealized_pnl_dollars = self.position_size * pct_return
+        elif self.position == self.SHORT:
+            unrealized_pnl = self._calculate_short_pnl(current_price)
+            pct_return = (self.entry_price - current_price) / self.entry_price
+            unrealized_pnl_dollars = self.position_size * pct_return
+        
         info = {
             'step': self.current_step,
             'position': self.POSITION_NAMES[self.position],
             'entry_price': self.entry_price,
             'current_price': current_price,
-            'total_reward': self.total_reward,
+            # Capital info
+            'balance': self.balance,
+            'equity': self.equity,
+            'position_size': self.position_size,
+            'position_quantity': self.position_quantity,
+            # P&L info
+            'unrealized_pnl': unrealized_pnl,
+            'unrealized_pnl_dollars': unrealized_pnl_dollars,
             'realized_pnl': self.realized_pnl,
+            'realized_pnl_dollars': self.realized_pnl_dollars,
+            'total_reward': self.total_reward,
+            # Statistics
             'num_trades': self.num_trades,
             'win_rate': self.winning_trades / max(self.num_trades, 1),
+            'roi': (self.balance - self.initial_capital) / self.initial_capital,
+            'max_drawdown': self.max_drawdown,
         }
-        
-        # Add unrealized P&L if in position
-        if self.position == self.LONG:
-            info['unrealized_pnl'] = self._calculate_long_pnl(current_price)
-        elif self.position == self.SHORT:
-            info['unrealized_pnl'] = self._calculate_short_pnl(current_price)
-        else:
-            info['unrealized_pnl'] = 0.0
         
         return info
     
     def _calculate_long_pnl(self, exit_price: float) -> float:
         """
-        Calculate P&L for closing a LONG position.
+        Calculate log return P&L for closing a LONG position.
         
         P&L = log(exit_price / entry_price) - 2 * fees
-        (fees on both entry and exit)
         """
         if self.entry_price <= 0:
             return 0.0
         
         gross_pnl = np.log(exit_price / self.entry_price)
-        fee_cost = 2 * self.fees  # Entry + exit fees
+        fee_cost = 2 * self.fees
         net_pnl = gross_pnl - fee_cost
         
         return float(net_pnl)
     
     def _calculate_short_pnl(self, exit_price: float) -> float:
         """
-        Calculate P&L for closing a SHORT position.
+        Calculate log return P&L for closing a SHORT position.
         
         P&L = log(entry_price / exit_price) - 2 * fees
-        (profit when price goes down)
         """
         if self.entry_price <= 0:
             return 0.0
@@ -358,10 +474,11 @@ class PositionTradingEnv(gym.Env):
             return 0.0
         return 0.0
     
-    def _record_trade(self, trade_type: str, pnl: float) -> None:
+    def _record_trade(self, trade_type: str, pnl: float, pnl_dollars: float, exit_price: float) -> None:
         """Record a completed trade."""
         self.num_trades += 1
         self.realized_pnl += pnl
+        self.realized_pnl_dollars += pnl_dollars
         
         if pnl > 0:
             self.winning_trades += 1
@@ -371,8 +488,10 @@ class PositionTradingEnv(gym.Env):
             'entry_step': self.entry_step,
             'exit_step': self.current_step,
             'entry_price': self.entry_price,
-            'exit_price': self.closes[self.current_step],
+            'exit_price': exit_price,
+            'position_size': self.position_size,
             'pnl': pnl,
+            'pnl_dollars': pnl_dollars,
             'holding_period': self.current_step - self.entry_step
         })
     
@@ -381,17 +500,22 @@ class PositionTradingEnv(gym.Env):
         if self.render_mode == 'human':
             current_price = self.closes[min(self.current_step, len(self.closes) - 1)]
             print(f"Step: {self.current_step}/{self.max_step}")
+            print(f"Balance: ${self.balance:,.2f} | Equity: ${self.equity:,.2f}")
             print(f"Position: {self.POSITION_NAMES[self.position]}")
-            print(f"Current Price: {current_price:.2f}")
+            print(f"Current Price: ${current_price:,.2f}")
             if self.position != self.FLAT:
-                print(f"Entry Price: {self.entry_price:.2f}")
-                if self.position == self.LONG:
-                    print(f"Unrealized P&L: {self._calculate_long_pnl(current_price):.4f}")
-                else:
-                    print(f"Unrealized P&L: {self._calculate_short_pnl(current_price):.4f}")
-            print(f"Realized P&L: {self.realized_pnl:.4f}")
+                print(f"Entry Price: ${self.entry_price:,.2f}")
+                print(f"Position Size: ${self.position_size:,.2f}")
+                pct_return = (current_price - self.entry_price) / self.entry_price
+                if self.position == self.SHORT:
+                    pct_return = -pct_return
+                unrealized = self.position_size * pct_return
+                print(f"Unrealized P&L: ${unrealized:,.2f} ({pct_return:.2%})")
+            print(f"Realized P&L: ${self.realized_pnl_dollars:,.2f}")
+            print(f"ROI: {(self.balance - self.initial_capital) / self.initial_capital:.2%}")
             print(f"Trades: {self.num_trades} (Win rate: {self.winning_trades/max(self.num_trades,1):.1%})")
-            print("-" * 40)
+            print(f"Max Drawdown: {self.max_drawdown:.2%}")
+            print("-" * 50)
     
     def get_trade_statistics(self) -> Dict[str, Any]:
         """Get comprehensive trade statistics."""
@@ -400,23 +524,36 @@ class PositionTradingEnv(gym.Env):
                 'num_trades': 0,
                 'win_rate': 0.0,
                 'total_pnl': 0.0,
+                'total_pnl_dollars': 0.0,
                 'avg_pnl': 0.0,
+                'avg_pnl_dollars': 0.0,
                 'avg_holding_period': 0.0,
+                'final_balance': self.balance,
+                'roi': 0.0,
+                'max_drawdown': self.max_drawdown,
             }
         
         pnls = [t['pnl'] for t in self.trade_history]
+        pnls_dollars = [t['pnl_dollars'] for t in self.trade_history]
         holding_periods = [t['holding_period'] for t in self.trade_history]
         
         return {
             'num_trades': self.num_trades,
             'win_rate': self.winning_trades / self.num_trades,
             'total_pnl': self.realized_pnl,
+            'total_pnl_dollars': self.realized_pnl_dollars,
             'avg_pnl': np.mean(pnls),
+            'avg_pnl_dollars': np.mean(pnls_dollars),
             'max_pnl': np.max(pnls),
             'min_pnl': np.min(pnls),
+            'max_pnl_dollars': np.max(pnls_dollars),
+            'min_pnl_dollars': np.min(pnls_dollars),
             'avg_holding_period': np.mean(holding_periods),
             'long_trades': sum(1 for t in self.trade_history if t['type'] == 'LONG'),
             'short_trades': sum(1 for t in self.trade_history if t['type'] == 'SHORT'),
+            'final_balance': self.balance,
+            'roi': (self.balance - self.initial_capital) / self.initial_capital,
+            'max_drawdown': self.max_drawdown,
         }
     
     def get_action_distribution(self) -> Dict[str, float]:
@@ -470,48 +607,62 @@ def create_position_trading_env(
 
 
 if __name__ == '__main__':
-    # Test the position-based environment
+    # Test the position-based environment with capital management
     from data.datasets.utils import prepare_training_data
     
     print("Loading data...")
     data = prepare_training_data('data/datasets/BTC_processed.csv')
     
-    print("\nCreating position-based environment...")
+    print("\nCreating position-based environment with capital management...")
     env = PositionTradingEnv(
         sequences=data['train']['sequences'],
         highs=data['train']['highs'],
         lows=data['train']['lows'],
-        closes=data['train']['closes']
+        closes=data['train']['closes'],
+        initial_capital=10000,
+        risk_per_trade=0.02,
+        leverage=10
     )
     
     print(f"Observation space: {env.observation_space}")
     print(f"Action space: {env.action_space}")
     print(f"Episode length: {env.episode_length}")
+    print(f"Initial capital: ${env.initial_capital:,.2f}")
+    print(f"Risk per trade: {env.risk_per_trade:.1%}")
+    print(f"Leverage: {env.leverage}x")
     
     # Test trading sequence
     print("\n--- Testing Trade Sequence ---")
     obs, info = env.reset()
-    print(f"Initial position: {info['position']}")
+    print(f"Initial balance: ${info['balance']:,.2f}")
     
     # Open LONG
     obs, reward, _, _, info = env.step(0)  # BUY
-    print(f"After BUY: position={info['position']}, reward={reward:.4f}")
+    print(f"After BUY:")
+    print(f"  Position: {info['position']}")
+    print(f"  Position size: ${info['position_size']:,.2f}")
+    print(f"  Entry price: ${info['entry_price']:,.2f}")
     
     # Hold
     for _ in range(5):
         obs, reward, _, _, info = env.step(2)  # HOLD
-    print(f"After 5 HOLDs: position={info['position']}, unrealized_pnl={info['unrealized_pnl']:.4f}")
+    print(f"After 5 HOLDs:")
+    print(f"  Unrealized P&L: ${info['unrealized_pnl_dollars']:,.2f}")
+    print(f"  Equity: ${info['equity']:,.2f}")
     
     # Close LONG
     obs, reward, _, _, info = env.step(1)  # SELL
-    print(f"After SELL: position={info['position']}, reward={reward:.4f}")
+    print(f"After SELL (close):")
+    print(f"  Position: {info['position']}")
+    print(f"  P&L: ${info['pnl_dollars']:,.2f}")
+    print(f"  Balance: ${info['balance']:,.2f}")
     
-    # Run full episode with simple strategy
-    print("\n--- Running Full Episode ---")
+    # Run longer test
+    print("\n--- Running 1000-step Episode ---")
     obs, _ = env.reset()
     
     for step in range(min(1000, env.episode_length)):
-        # Simple strategy: alternate between trades
+        # Simple strategy
         if env.position == env.FLAT:
             action = env.BUY if step % 100 < 50 else env.SELL
         elif env.position == env.LONG:
@@ -528,6 +679,9 @@ if __name__ == '__main__':
     print(f"\nTrade Statistics:")
     print(f"  Trades: {stats['num_trades']}")
     print(f"  Win Rate: {stats['win_rate']:.1%}")
-    print(f"  Total P&L: {stats['total_pnl']:.4f}")
-    print(f"  Avg P&L per trade: {stats['avg_pnl']:.4f}")
+    print(f"  Total P&L: ${stats['total_pnl_dollars']:,.2f}")
+    print(f"  Avg P&L per trade: ${stats['avg_pnl_dollars']:,.2f}")
+    print(f"  Final Balance: ${stats['final_balance']:,.2f}")
+    print(f"  ROI: {stats['roi']:.2%}")
+    print(f"  Max Drawdown: {stats['max_drawdown']:.2%}")
     print(f"  Avg Holding Period: {stats['avg_holding_period']:.1f} steps")
