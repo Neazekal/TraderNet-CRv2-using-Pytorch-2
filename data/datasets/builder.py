@@ -5,6 +5,7 @@ Builds the final dataset by combining:
 - OHLCV preprocessing (log returns, hour)
 - Technical indicators (12 indicators)
 - Derived features (relative prices, volume diffs)
+- Market regime detection (trending, ranging, high volatility)
 - Feature scaling (Min-Max to [0, 1])
 
 Output: 20 features ready for model training.
@@ -20,10 +21,11 @@ import pickle
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from config.config import FEATURES, TA_PARAMS
+from config.config import FEATURES, TA_PARAMS, REGIME_PARAMS
 from data.preprocessing.ohlcv import OHLCVPreprocessor
 from analysis.technical.indicators_calc import TechnicalIndicators
 from data.preprocessing.technical import TechnicalPreprocessor
+from data.preprocessing.regime import RegimeDetector
 
 
 class DatasetBuilder:
@@ -45,21 +47,24 @@ class DatasetBuilder:
         builder.save('data/datasets/BTC_processed.csv')
     """
     
-    def __init__(self, features: list = None, ta_params: dict = None):
+    def __init__(self, features: list = None, ta_params: dict = None, regime_params: dict = None):
         """
         Initialize dataset builder.
         
         Args:
             features: List of feature names to include (default: from config)
             ta_params: Technical indicator parameters (default: from config)
+            regime_params: Market regime detection parameters (default: from config)
         """
         self.features = features or FEATURES
         self.ta_params = ta_params or TA_PARAMS
+        self.regime_params = regime_params or REGIME_PARAMS
         
         # Initialize preprocessors
         self.ohlcv_preprocessor = OHLCVPreprocessor()
         self.ta_calculator = TechnicalIndicators(**self.ta_params)
         self.tech_preprocessor = TechnicalPreprocessor()
+        self.regime_detector = RegimeDetector(**self.regime_params)
         
         # Scaler (fitted during build)
         self.scaler: Optional[MinMaxScaler] = None
@@ -104,12 +109,23 @@ class DatasetBuilder:
         print("  Computing derived features...")
         df = self.tech_preprocessor.compute_derived_features(df)
         
-        # Step 5: Keep timestamp and required columns for reward calculation
+        # Step 5: Detect market regime
+        print("  Detecting market regimes...")
+        df = self.regime_detector.detect_regime(df)
+        
+        # Print regime statistics
+        stats = self.regime_detector.get_regime_stats(df)
+        print(f"    Regime distribution: ", end="")
+        for regime, pct in stats['regime_percentages'].items():
+            print(f"{regime}={pct:.1f}% ", end="")
+        print()
+        
+        # Step 6: Keep timestamp and required columns for reward calculation
         # Store highs, lows, closes before selecting features
         metadata_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
         metadata = df[metadata_cols].copy()
         
-        # Step 6: Select final features
+        # Step 7: Select final features
         print(f"  Selecting {len(self.features)} features...")
         missing_features = set(self.features) - set(df.columns)
         if missing_features:
@@ -117,7 +133,7 @@ class DatasetBuilder:
         
         feature_df = df[self.features].copy()
         
-        # Step 7: Drop NaN rows (from indicator warm-up periods)
+        # Step 8: Drop NaN rows (from indicator warm-up periods)
         print("  Dropping NaN rows...")
         valid_mask = ~feature_df.isna().any(axis=1)
         feature_df = feature_df[valid_mask]
