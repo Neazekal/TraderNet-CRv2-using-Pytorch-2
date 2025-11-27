@@ -31,7 +31,9 @@ from config.config import (
     POSITION_LONG, POSITION_SHORT, POSITION_FLAT, POSITION_NAMES,
     ACTION_TO_POSITION,
     INITIAL_CAPITAL, RISK_PER_TRADE, LEVERAGE, MAX_POSITION_SIZE,
-    STOP_LOSS, TAKE_PROFIT
+    STOP_LOSS, TAKE_PROFIT,
+    DRAWDOWN_PENALTY_ENABLED, DRAWDOWN_PENALTY_THRESHOLD,
+    DRAWDOWN_PENALTY_SCALE, DRAWDOWN_PENALTY_MAX
 )
 
 
@@ -140,6 +142,10 @@ class PositionTradingEnv(gym.Env):
         take_profit: float = TAKE_PROFIT,
         fees: float = FEES,
         reward_on_hold: str = 'zero',
+        drawdown_penalty_enabled: bool = DRAWDOWN_PENALTY_ENABLED,
+        drawdown_penalty_threshold: float = DRAWDOWN_PENALTY_THRESHOLD,
+        drawdown_penalty_scale: float = DRAWDOWN_PENALTY_SCALE,
+        drawdown_penalty_max: float = DRAWDOWN_PENALTY_MAX,
         render_mode: Optional[str] = None
     ):
         """
@@ -158,6 +164,10 @@ class PositionTradingEnv(gym.Env):
             take_profit: Take-profit threshold (default: 0.04 = 4%)
             fees: Transaction fee percentage per trade (default: 0.001 = 0.1%)
             reward_on_hold: Reward type when holding ('zero', 'unrealized', 'small_negative')
+            drawdown_penalty_enabled: Whether to apply drawdown penalty (default: True)
+            drawdown_penalty_threshold: Drawdown % to start penalizing (default: 0.05 = 5%)
+            drawdown_penalty_scale: Penalty multiplier (default: 0.5)
+            drawdown_penalty_max: Maximum penalty per step (default: 0.1)
             render_mode: Rendering mode ('human' or None)
         """
         super().__init__()
@@ -178,6 +188,12 @@ class PositionTradingEnv(gym.Env):
         self.fees = fees
         self.reward_on_hold = reward_on_hold
         self.render_mode = render_mode
+        
+        # Drawdown penalty parameters
+        self.drawdown_penalty_enabled = drawdown_penalty_enabled
+        self.drawdown_penalty_threshold = drawdown_penalty_threshold
+        self.drawdown_penalty_scale = drawdown_penalty_scale
+        self.drawdown_penalty_max = drawdown_penalty_max
         
         # Data dimensions
         self.num_samples, self.seq_length, self.num_features = sequences.shape
@@ -226,6 +242,7 @@ class PositionTradingEnv(gym.Env):
         self.flip_count = 0
         self.max_drawdown = 0.0
         self.peak_equity = self.initial_capital
+        self.total_drawdown_penalty = 0.0  # Total drawdown penalty accumulated
         self.action_history = []
         self.trade_history = []
         
@@ -347,8 +364,13 @@ class PositionTradingEnv(gym.Env):
         # Update equity (balance + unrealized P&L)
         self._update_equity(current_price)
         
+        # Apply drawdown penalty (after equity update)
+        drawdown_penalty = self._calculate_drawdown_penalty()
+        reward -= drawdown_penalty
+        
         # Update tracking
         self.total_reward += reward
+        self.total_drawdown_penalty += drawdown_penalty
         self.action_history.append(action)
         
         # Move to next step
@@ -377,6 +399,7 @@ class PositionTradingEnv(gym.Env):
         info['trade_closed'] = trade_closed
         info['exit_reason'] = exit_reason
         info['flipped'] = flipped
+        info['drawdown_penalty'] = drawdown_penalty
         
         return observation, reward, terminated, truncated, info
     
@@ -569,6 +592,8 @@ class PositionTradingEnv(gym.Env):
             'win_rate': self.winning_trades / max(self.num_trades, 1),
             'roi': (self.balance - self.initial_capital) / self.initial_capital,
             'max_drawdown': self.max_drawdown,
+            'current_drawdown': (self.peak_equity - self.equity) / self.peak_equity if self.peak_equity > 0 else 0.0,
+            'total_drawdown_penalty': self.total_drawdown_penalty,
             # Exit statistics
             'sl_triggered': self.sl_triggered_count,
             'tp_triggered': self.tp_triggered_count,
@@ -636,6 +661,42 @@ class PositionTradingEnv(gym.Env):
         
         return float(net_pnl)
     
+    def _calculate_drawdown_penalty(self) -> float:
+        """
+        Calculate drawdown penalty based on current drawdown.
+        
+        Penalty formula:
+        - No penalty if drawdown < threshold
+        - Linear penalty: scale * (drawdown - threshold) if drawdown >= threshold
+        - Capped at max penalty
+        
+        This encourages the agent to preserve capital and avoid large drawdowns.
+        
+        Returns:
+            Drawdown penalty (negative value to subtract from reward)
+        """
+        if not self.drawdown_penalty_enabled:
+            return 0.0
+        
+        # Calculate current drawdown
+        if self.peak_equity <= 0:
+            return 0.0
+        
+        current_drawdown = (self.peak_equity - self.equity) / self.peak_equity
+        
+        # No penalty if below threshold
+        if current_drawdown <= self.drawdown_penalty_threshold:
+            return 0.0
+        
+        # Calculate penalty (linear scaling above threshold)
+        excess_drawdown = current_drawdown - self.drawdown_penalty_threshold
+        penalty = self.drawdown_penalty_scale * excess_drawdown
+        
+        # Cap at maximum penalty
+        penalty = min(penalty, self.drawdown_penalty_max)
+        
+        return penalty
+    
     def _get_hold_reward(self, current_price: float = None) -> float:
         """Get reward for holding position."""
         if self.reward_on_hold == 'zero':
@@ -692,7 +753,7 @@ class PositionTradingEnv(gym.Env):
             print(f"ROI: {(self.balance - self.initial_capital) / self.initial_capital:.2%}")
             print(f"Trades: {self.num_trades} (Win rate: {self.winning_trades/max(self.num_trades,1):.1%})")
             print(f"Exits - SL: {self.sl_triggered_count} | TP: {self.tp_triggered_count} | Flip: {self.flip_count} | Manual: {self.manual_close_count}")
-            print(f"Max Drawdown: {self.max_drawdown:.2%}")
+            print(f"Max Drawdown: {self.max_drawdown:.2%} | Drawdown Penalty: {self.total_drawdown_penalty:.4f}")
             print("-" * 50)
     
     def get_trade_statistics(self) -> Dict[str, Any]:
@@ -709,6 +770,7 @@ class PositionTradingEnv(gym.Env):
                 'final_balance': self.balance,
                 'roi': 0.0,
                 'max_drawdown': self.max_drawdown,
+                'total_drawdown_penalty': self.total_drawdown_penalty,
                 'sl_triggered': 0,
                 'tp_triggered': 0,
                 'manual_closes': 0,
@@ -736,6 +798,7 @@ class PositionTradingEnv(gym.Env):
             'final_balance': self.balance,
             'roi': (self.balance - self.initial_capital) / self.initial_capital,
             'max_drawdown': self.max_drawdown,
+            'total_drawdown_penalty': self.total_drawdown_penalty,
             # Exit reason breakdown
             'sl_triggered': self.sl_triggered_count,
             'tp_triggered': self.tp_triggered_count,
@@ -794,23 +857,42 @@ def create_position_trading_env(
 
 
 if __name__ == '__main__':
-    # Test the position-based environment with instant flip
-    from data.datasets.utils import prepare_training_data
+    # Test the position-based environment with drawdown penalty
+    import numpy as np
     
-    print("Loading data...")
-    data = prepare_training_data('data/datasets/BTC_processed.csv')
+    print("Creating synthetic test data...")
+    # Create synthetic data for testing
+    num_samples = 3000
+    seq_length = SEQUENCE_LENGTH
+    num_features = len(FEATURES)
     
-    print("\nCreating environment with instant flip...")
+    # Random sequences (normalized 0-1)
+    sequences = np.random.rand(num_samples, seq_length, num_features).astype(np.float32)
+    
+    # Simulate price with trend and volatility
+    base_price = 50000.0
+    returns = np.random.normal(0, 0.005, num_samples)  # 0.5% hourly volatility
+    prices = base_price * np.exp(np.cumsum(returns))
+    
+    closes = prices.astype(np.float32)
+    highs = (prices * (1 + np.abs(np.random.normal(0, 0.003, num_samples)))).astype(np.float32)
+    lows = (prices * (1 - np.abs(np.random.normal(0, 0.003, num_samples)))).astype(np.float32)
+    
+    print("\nCreating environment with drawdown penalty...")
     env = PositionTradingEnv(
-        sequences=data['train']['sequences'],
-        highs=data['train']['highs'],
-        lows=data['train']['lows'],
-        closes=data['train']['closes'],
+        sequences=sequences,
+        highs=highs,
+        lows=lows,
+        closes=closes,
         initial_capital=10000,
         risk_per_trade=0.02,
         leverage=10,
         stop_loss=0.02,    # 2% SL
-        take_profit=0.04   # 4% TP
+        take_profit=0.04,  # 4% TP
+        drawdown_penalty_enabled=True,
+        drawdown_penalty_threshold=0.05,  # 5% threshold
+        drawdown_penalty_scale=0.5,
+        drawdown_penalty_max=0.1
     )
     
     print(f"Observation space: {env.observation_space}")
@@ -876,6 +958,7 @@ if __name__ == '__main__':
     print(f"  Final Balance: ${stats['final_balance']:,.2f}")
     print(f"  ROI: {stats['roi']:.2%}")
     print(f"  Max Drawdown: {stats['max_drawdown']:.2%}")
+    print(f"  Total Drawdown Penalty: {stats['total_drawdown_penalty']:.4f}")
     print(f"\nExit Breakdown:")
     print(f"  Stop-Loss: {stats['sl_triggered']}")
     print(f"  Take-Profit: {stats['tp_triggered']}")

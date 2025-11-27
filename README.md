@@ -348,6 +348,35 @@ env = create_position_trading_env(
 - SL/TP triggers are processed BEFORE the agent's action
 - Maximum loss per trade is limited to risk_per_trade (isolated margin)
 
+### Drawdown Penalty
+
+The environment applies a drawdown penalty to discourage excessive losses:
+
+```python
+env = create_position_trading_env(
+    'data/datasets/BTC_processed.csv',
+    drawdown_penalty_threshold=0.1,  # Start penalizing at 10% drawdown
+    drawdown_penalty_factor=0.5      # Penalty multiplier
+)
+```
+
+**How it works**:
+- Tracks peak equity throughout the episode
+- Calculates current drawdown: `(peak_equity - current_equity) / peak_equity`
+- When drawdown exceeds threshold, penalty is applied:
+  - `penalty = (drawdown - threshold) * penalty_factor`
+  - Subtracted from the reward
+
+**Example**:
+- Threshold: 10%, Factor: 0.5
+- Current drawdown: 15%
+- Penalty: `(0.15 - 0.10) * 0.5 = 0.025` subtracted from reward
+
+This teaches the agent to:
+- Preserve capital during losing streaks
+- Cut losses early rather than hoping for recovery
+- Maintain consistent equity curve
+
 ### Exit Types
 
 | Exit Reason | Description |
@@ -457,6 +486,12 @@ TRADING_PARAMS = {
     'leverage': 10,             # 10x leverage (isolated margin)
     'stop_loss': 0.02,          # 2% stop-loss from entry
     'take_profit': 0.04,        # 4% take-profit from entry (2:1 RR)
+}
+
+# Drawdown Penalty Settings
+DRAWDOWN_PARAMS = {
+    'drawdown_penalty_threshold': 0.1,   # Start penalizing at 10% drawdown
+    'drawdown_penalty_factor': 0.5,      # Penalty multiplier
 }
 
 # PPO Hyperparameters

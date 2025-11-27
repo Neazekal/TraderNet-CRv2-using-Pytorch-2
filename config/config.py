@@ -151,6 +151,13 @@ SMURF_HOLD_REWARD = 0.0055      # Fixed positive reward for HOLD in Smurf
 REWARD_MARKET_LIMIT = 'market_limit'
 REWARD_SMURF = 'smurf'
 
+# Drawdown Penalty Settings
+# Penalizes agent when equity falls below peak (encourages capital preservation)
+DRAWDOWN_PENALTY_ENABLED = True
+DRAWDOWN_PENALTY_THRESHOLD = 0.05   # Start penalizing at 5% drawdown
+DRAWDOWN_PENALTY_SCALE = 0.5        # Penalty multiplier (higher = more penalty)
+DRAWDOWN_PENALTY_MAX = 0.1          # Maximum penalty per step
+
 # =============================================================================
 # Safety Mechanisms
 # =============================================================================
