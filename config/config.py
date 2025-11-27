@@ -154,6 +154,9 @@ FUNDING_PARAMS = {
     'high_funding_threshold': 0.001,    # 0.1% per 8h = extreme funding
 }
 
+# Funding Fee Settings (for position trading environment)
+FUNDING_FEE_ENABLED = True              # Apply funding fees when holding positions
+
 # =============================================================================
 # Reward Function Settings
 # =============================================================================

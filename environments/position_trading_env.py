@@ -33,7 +33,8 @@ from config.config import (
     INITIAL_CAPITAL, RISK_PER_TRADE, LEVERAGE, MAX_POSITION_SIZE,
     STOP_LOSS, TAKE_PROFIT,
     DRAWDOWN_PENALTY_ENABLED, DRAWDOWN_PENALTY_THRESHOLD,
-    DRAWDOWN_PENALTY_SCALE, DRAWDOWN_PENALTY_MAX
+    DRAWDOWN_PENALTY_SCALE, DRAWDOWN_PENALTY_MAX,
+    FUNDING_FEE_ENABLED
 )
 
 
@@ -134,6 +135,7 @@ class PositionTradingEnv(gym.Env):
         highs: np.ndarray,
         lows: np.ndarray,
         closes: np.ndarray,
+        funding_rates: Optional[np.ndarray] = None,
         initial_capital: float = INITIAL_CAPITAL,
         risk_per_trade: float = RISK_PER_TRADE,
         leverage: float = LEVERAGE,
@@ -146,6 +148,7 @@ class PositionTradingEnv(gym.Env):
         drawdown_penalty_threshold: float = DRAWDOWN_PENALTY_THRESHOLD,
         drawdown_penalty_scale: float = DRAWDOWN_PENALTY_SCALE,
         drawdown_penalty_max: float = DRAWDOWN_PENALTY_MAX,
+        funding_fee_enabled: bool = FUNDING_FEE_ENABLED,
         render_mode: Optional[str] = None
     ):
         """
@@ -156,6 +159,7 @@ class PositionTradingEnv(gym.Env):
             highs: High prices aligned with sequences
             lows: Low prices aligned with sequences
             closes: Close prices aligned with sequences
+            funding_rates: Funding rates aligned with sequences (charged every 8h at 00:00, 08:00, 16:00 UTC)
             initial_capital: Starting capital in USDT (default: 10000)
             risk_per_trade: Fraction of capital to risk per trade (default: 0.02 = 2%)
             leverage: Leverage multiplier (default: 10 for futures)
@@ -168,6 +172,7 @@ class PositionTradingEnv(gym.Env):
             drawdown_penalty_threshold: Drawdown % to start penalizing (default: 0.05 = 5%)
             drawdown_penalty_scale: Penalty multiplier (default: 0.5)
             drawdown_penalty_max: Maximum penalty per step (default: 0.1)
+            funding_fee_enabled: Whether to apply funding fees when holding positions (default: True)
             render_mode: Rendering mode ('human' or None)
         """
         super().__init__()
@@ -177,6 +182,13 @@ class PositionTradingEnv(gym.Env):
         self.highs = highs.astype(np.float32)
         self.lows = lows.astype(np.float32)
         self.closes = closes.astype(np.float32)
+        
+        # Funding rates (can be None if not available)
+        if funding_rates is not None:
+            self.funding_rates = funding_rates.astype(np.float32)
+        else:
+            self.funding_rates = np.zeros(len(closes), dtype=np.float32)
+        self.funding_fee_enabled = funding_fee_enabled
         
         # Capital management parameters
         self.initial_capital = initial_capital
@@ -230,6 +242,10 @@ class PositionTradingEnv(gym.Env):
         self.balance = self.initial_capital
         self.equity = self.initial_capital  # Balance + unrealized P&L
         
+        # Funding fee tracking
+        self.total_funding_fees = 0.0       # Total funding fees paid/received
+        self.current_trade_funding = 0.0    # Funding fees for current open trade
+        
         # Statistics tracking
         self.total_reward = 0.0
         self.realized_pnl = 0.0
@@ -273,14 +289,61 @@ class PositionTradingEnv(gym.Env):
         
         return observation, info
     
+    def _calculate_funding_fee(self) -> float:
+        """
+        Calculate funding fee for current step if holding a position.
+        
+        Funding fees are charged on Binance Futures every 8 hours at:
+        - 00:00 UTC (hour 0)
+        - 08:00 UTC (hour 8)  
+        - 16:00 UTC (hour 16)
+        
+        Funding fee formula:
+        - LONG position: pay if rate > 0, receive if rate < 0
+        - SHORT position: receive if rate > 0, pay if rate < 0
+        - Fee = position_size * funding_rate * (-position_direction)
+        
+        With our position values (+1 LONG, -1 SHORT):
+        - LONG (+1): funding_fee = position_size * funding_rate * (-1) = -position_size * funding_rate
+        - SHORT (-1): funding_fee = position_size * funding_rate * (+1) = +position_size * funding_rate
+        
+        So when funding_rate > 0:
+        - LONG pays (negative fee returned)
+        - SHORT receives (positive fee returned)
+        
+        Returns:
+            Funding fee in dollars (negative = pay, positive = receive)
+        """
+        if not self.funding_fee_enabled or self.position == self.FLAT:
+            return 0.0
+        
+        # Get funding rate for current step
+        funding_rate = self.funding_rates[self.current_step]
+        
+        # Only apply funding at funding times (every 8 hours: 0, 8, 16 UTC)
+        # The hour is encoded in the sequences, but we use the funding_rate directly
+        # Funding rate is forward-filled, so it's only non-zero at funding times
+        # If funding_rate is 0 (not a funding time), no fee is charged
+        if funding_rate == 0.0:
+            return 0.0
+        
+        # Calculate funding fee
+        # LONG pays positive funding, receives negative funding
+        # SHORT receives positive funding, pays negative funding
+        # Fee = -position * funding_rate * position_size
+        funding_fee = -self.position * funding_rate * self.position_size
+        
+        return funding_fee
+    
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """
         Execute one step in the environment.
         
         Order of operations:
-        1. Check if SL/TP triggered (using high/low prices)
-        2. If not triggered, process agent's action
-        3. Update equity and tracking
+        1. Calculate funding fee if holding position
+        2. Check if SL/TP triggered (using high/low prices)
+        3. If not triggered, process agent's action
+        4. Update equity and tracking
         
         Action Matrix:
             Current | LONG(0)     | SHORT(1)    | FLAT(2)
@@ -308,8 +371,18 @@ class PositionTradingEnv(gym.Env):
         trade_closed = False
         exit_reason = None
         flipped = False
+        funding_fee = 0.0
         
-        # Check SL/TP triggers FIRST (before processing action)
+        # Calculate funding fee FIRST (before any position changes)
+        if self.position != self.FLAT:
+            funding_fee = self._calculate_funding_fee()
+            if funding_fee != 0.0:
+                # Apply funding fee to balance immediately
+                self.balance += funding_fee
+                self.current_trade_funding += funding_fee
+                self.total_funding_fees += funding_fee
+        
+        # Check SL/TP triggers (before processing action)
         if self.position != self.FLAT:
             sl_tp_result = self._check_sl_tp(current_high, current_low)
             if sl_tp_result is not None:
@@ -400,6 +473,7 @@ class PositionTradingEnv(gym.Env):
         info['exit_reason'] = exit_reason
         info['flipped'] = flipped
         info['drawdown_penalty'] = drawdown_penalty
+        info['funding_fee'] = funding_fee
         
         return observation, reward, terminated, truncated, info
     
@@ -447,6 +521,9 @@ class PositionTradingEnv(gym.Env):
         self.position = position_type
         self.entry_price = price
         self.entry_step = self.current_step
+        
+        # Reset funding for new trade
+        self.current_trade_funding = 0.0
         
         # Calculate position size based on risk
         # Max loss = balance * risk_per_trade
@@ -587,6 +664,9 @@ class PositionTradingEnv(gym.Env):
             'realized_pnl': self.realized_pnl,
             'realized_pnl_dollars': self.realized_pnl_dollars,
             'total_reward': self.total_reward,
+            # Funding fee info
+            'current_trade_funding': self.current_trade_funding,
+            'total_funding_fees': self.total_funding_fees,
             # Statistics
             'num_trades': self.num_trades,
             'win_rate': self.winning_trades / max(self.num_trades, 1),
@@ -709,7 +789,7 @@ class PositionTradingEnv(gym.Env):
         return 0.0
     
     def _record_trade(self, trade_type: str, pnl: float, pnl_dollars: float, exit_price: float, exit_reason: str = 'manual') -> None:
-        """Record a completed trade."""
+        """Record a completed trade including funding fees."""
         self.num_trades += 1
         self.realized_pnl += pnl
         self.realized_pnl_dollars += pnl_dollars
@@ -728,6 +808,7 @@ class PositionTradingEnv(gym.Env):
             'position_size': self.position_size,
             'pnl': pnl,
             'pnl_dollars': pnl_dollars,
+            'funding_fees': self.current_trade_funding,  # Funding fees for this trade
             'holding_period': self.current_step - self.entry_step,
             'exit_reason': exit_reason
         })
@@ -744,12 +825,14 @@ class PositionTradingEnv(gym.Env):
                 print(f"Entry Price: ${self.entry_price:,.2f}")
                 print(f"SL: ${self.sl_price:,.2f} | TP: ${self.tp_price:,.2f}")
                 print(f"Position Size: ${self.position_size:,.2f}")
+                print(f"Trade Funding Fees: ${self.current_trade_funding:,.2f}")
                 # Unified P&L calculation using position direction
                 pct_change = (current_price - self.entry_price) / self.entry_price
                 pct_return = self.position * pct_change
                 unrealized = self.position_size * pct_return
                 print(f"Unrealized P&L: ${unrealized:,.2f} ({pct_return:.2%})")
             print(f"Realized P&L: ${self.realized_pnl_dollars:,.2f}")
+            print(f"Total Funding Fees: ${self.total_funding_fees:,.2f}")
             print(f"ROI: {(self.balance - self.initial_capital) / self.initial_capital:.2%}")
             print(f"Trades: {self.num_trades} (Win rate: {self.winning_trades/max(self.num_trades,1):.1%})")
             print(f"Exits - SL: {self.sl_triggered_count} | TP: {self.tp_triggered_count} | Flip: {self.flip_count} | Manual: {self.manual_close_count}")
@@ -764,6 +847,7 @@ class PositionTradingEnv(gym.Env):
                 'win_rate': 0.0,
                 'total_pnl': 0.0,
                 'total_pnl_dollars': 0.0,
+                'total_funding_fees': self.total_funding_fees,
                 'avg_pnl': 0.0,
                 'avg_pnl_dollars': 0.0,
                 'avg_holding_period': 0.0,
@@ -780,12 +864,15 @@ class PositionTradingEnv(gym.Env):
         pnls = [t['pnl'] for t in self.trade_history]
         pnls_dollars = [t['pnl_dollars'] for t in self.trade_history]
         holding_periods = [t['holding_period'] for t in self.trade_history]
+        funding_fees = [t.get('funding_fees', 0.0) for t in self.trade_history]
         
         return {
             'num_trades': self.num_trades,
             'win_rate': self.winning_trades / self.num_trades,
             'total_pnl': self.realized_pnl,
             'total_pnl_dollars': self.realized_pnl_dollars,
+            'total_funding_fees': self.total_funding_fees,
+            'avg_funding_per_trade': np.mean(funding_fees),
             'avg_pnl': np.mean(pnls),
             'avg_pnl_dollars': np.mean(pnls_dollars),
             'max_pnl': np.max(pnls),
@@ -839,6 +926,7 @@ def create_position_trading_env(
         Configured PositionTradingEnv instance
     """
     from data.datasets.utils import load_processed_dataset, create_sequences, get_price_data
+    import pandas as pd
     
     # Load data
     df = load_processed_dataset(processed_csv_path)
@@ -847,11 +935,18 @@ def create_position_trading_env(
     sequences = create_sequences(df, SEQUENCE_LENGTH, FEATURES)
     highs, lows, closes = get_price_data(df, SEQUENCE_LENGTH)
     
+    # Get funding rates if available
+    funding_rates = None
+    if 'funding_rate' in df.columns:
+        # Align funding rates with sequences (skip first SEQUENCE_LENGTH-1 rows)
+        funding_rates = df['funding_rate'].values[SEQUENCE_LENGTH-1:]
+    
     return PositionTradingEnv(
         sequences=sequences,
         highs=highs,
         lows=lows,
         closes=closes,
+        funding_rates=funding_rates,
         **kwargs
     )
 

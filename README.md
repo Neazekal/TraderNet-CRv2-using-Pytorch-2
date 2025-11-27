@@ -369,6 +369,34 @@ env = create_position_trading_env(
 - SL/TP triggers are processed BEFORE the agent's action
 - Maximum loss per trade is limited to risk_per_trade (isolated margin)
 
+### Funding Fee
+
+The environment simulates real Binance Futures funding fees that occur every 8 hours (at 00:00, 08:00, 16:00 UTC):
+
+```python
+env = create_position_trading_env(
+    'data/datasets/BTC_processed.csv',
+    enable_funding_fee=True  # Enable funding fee simulation (default: True)
+)
+```
+
+**How it works**:
+- Funding fee is charged/paid when holding a position at funding times
+- Fee = Position Size x Funding Rate
+- **Positive funding rate**: LONG pays, SHORT receives
+- **Negative funding rate**: SHORT pays, LONG receives
+- Funding rate is read from the `funding_rate` column in the dataset
+
+**Example**:
+- Position: LONG, Size: $2,000
+- Funding rate: 0.01% (positive)
+- Fee: $2,000 x 0.0001 = $0.20 deducted from balance
+
+This teaches the agent to:
+- Consider funding costs when holding positions long-term
+- Potentially close positions before unfavorable funding times
+- Factor in funding direction when choosing LONG vs SHORT
+
 ### Drawdown Penalty
 
 The environment applies a drawdown penalty to discourage excessive losses:
@@ -407,6 +435,18 @@ This teaches the agent to:
 | `flip` | Position flipped to opposite direction |
 | `manual` | Agent chose FLAT action |
 | `end_episode` | Episode ended with open position |
+
+### Funding Fee in Info
+
+When funding fee is applied, the info dictionary includes:
+
+```python
+info = {
+    # ... other fields ...
+    'funding_fee_applied': True,
+    'funding_fee': -0.20,  # Negative = paid, Positive = received
+    'funding_rate': 0.0001,
+}
 
 ### Info Dictionary
 
@@ -453,6 +493,7 @@ info = {
 | Capital management | No | Yes (balance, equity) |
 | Leverage | No | Yes (configurable) |
 | Stop-Loss/Take-Profit | No | Yes (auto-trigger) |
+| Funding fee | No | Yes (8-hour intervals) |
 | Instant flip | N/A | Yes (LONG to SHORT) |
 | Rewards | Potential profit | Actual P&L on close |
 | Fees | Once per step | On open + close |
