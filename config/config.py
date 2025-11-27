@@ -52,6 +52,11 @@ RISK_PER_TRADE = 0.02           # Risk 2% of capital per trade
 LEVERAGE = 10                   # Leverage multiplier (1 = no leverage, 10 = 10x)
 MAX_POSITION_SIZE = 0.5         # Max 50% of capital in single position
 
+# Stop-Loss / Take-Profit
+STOP_LOSS = 0.02                # 2% stop-loss (auto-close on loss)
+TAKE_PROFIT = 0.04              # 4% take-profit (auto-close on profit)
+USE_ISOLATED_MARGIN = True      # Isolated margin (max loss = position margin only)
+
 # =============================================================================
 # Feature Engineering
 # =============================================================================

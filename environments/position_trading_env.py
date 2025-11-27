@@ -10,7 +10,8 @@ Features:
 - Position tracking (FLAT/LONG/SHORT)
 - Capital management (balance, position sizing)
 - Leverage support for futures trading
-- Risk per trade control
+- Risk per trade control (isolated margin)
+- Stop-Loss and Take-Profit auto-close
 - Actual P&L in both percentage and dollar amounts
 """
 
@@ -26,19 +27,21 @@ sys.path.append(str(Path(__file__).parent.parent))
 from config.config import (
     FEATURES, SEQUENCE_LENGTH, FEES,
     NUM_ACTIONS, ACTION_BUY, ACTION_SELL, ACTION_HOLD, ACTION_NAMES,
-    INITIAL_CAPITAL, RISK_PER_TRADE, LEVERAGE, MAX_POSITION_SIZE
+    INITIAL_CAPITAL, RISK_PER_TRADE, LEVERAGE, MAX_POSITION_SIZE,
+    STOP_LOSS, TAKE_PROFIT
 )
 
 
 class PositionTradingEnv(gym.Env):
     """
-    Position-based trading environment with capital management.
+    Position-based trading environment with capital management and SL/TP.
     
-    Simulates realistic futures/spot trading with:
+    Simulates realistic futures trading with:
     - Position tracking (FLAT/LONG/SHORT)
     - Capital and balance management
-    - Leverage support
+    - Leverage support (isolated margin)
     - Risk-based position sizing
+    - Stop-Loss and Take-Profit auto-close
     - Actual P&L calculation in dollars
     
     Position States:
@@ -51,32 +54,38 @@ class PositionTradingEnv(gym.Env):
         SELL (1): Open SHORT (if FLAT) or Close LONG (if LONG)
         HOLD (2): Maintain current position
     
+    Exit Conditions (checked each step):
+        1. Agent manually closes (SELL when LONG, BUY when SHORT)
+        2. Take-Profit triggered (price reaches +TP%)
+        3. Stop-Loss triggered (price reaches -SL%)
+    
     Capital Management:
         - initial_capital: Starting balance (default: $10,000)
         - risk_per_trade: % of capital to risk per trade (default: 2%)
         - leverage: Position multiplier for futures (default: 10x)
-        - Position size = (capital * risk_per_trade) * leverage
+        - Isolated margin: max loss per trade = risk_per_trade * capital
     
     Rewards:
-        - Returns log returns for RL training (scale-invariant)
-        - info dict contains actual dollar P&L
+        - Manual close: actual log return P&L
+        - TP triggered: +take_profit log return
+        - SL triggered: -stop_loss log return
     
     Example:
         env = PositionTradingEnv(
             sequences, highs, lows, closes,
             initial_capital=10000,
             risk_per_trade=0.02,
-            leverage=10
+            leverage=10,
+            stop_loss=0.02,
+            take_profit=0.04
         )
         obs, info = env.reset()
-        print(info['balance'])  # $10,000
         
-        obs, reward, _, _, info = env.step(0)  # BUY
-        print(info['position_value'])  # $2,000 (2% * 10x leverage)
-        
-        obs, reward, _, _, info = env.step(1)  # SELL (close)
-        print(info['pnl_dollars'])  # Actual profit/loss
-        print(info['balance'])  # Updated balance
+        obs, reward, _, _, info = env.step(0)  # BUY -> LONG
+        # Position auto-closes if:
+        # - Price drops 2% (SL)
+        # - Price rises 4% (TP)
+        # - Agent calls SELL (manual)
     """
     
     metadata = {'render_modes': ['human']}
@@ -86,6 +95,12 @@ class PositionTradingEnv(gym.Env):
     LONG = 1
     SHORT = 2
     POSITION_NAMES = {0: 'FLAT', 1: 'LONG', 2: 'SHORT'}
+    
+    # Exit reasons
+    EXIT_MANUAL = 'manual'
+    EXIT_STOP_LOSS = 'stop_loss'
+    EXIT_TAKE_PROFIT = 'take_profit'
+    EXIT_END_EPISODE = 'end_episode'
     
     # Action constants (from config)
     BUY = ACTION_BUY
@@ -103,6 +118,8 @@ class PositionTradingEnv(gym.Env):
         risk_per_trade: float = RISK_PER_TRADE,
         leverage: float = LEVERAGE,
         max_position_size: float = MAX_POSITION_SIZE,
+        stop_loss: float = STOP_LOSS,
+        take_profit: float = TAKE_PROFIT,
         fees: float = FEES,
         reward_on_hold: str = 'zero',
         render_mode: Optional[str] = None
@@ -119,6 +136,8 @@ class PositionTradingEnv(gym.Env):
             risk_per_trade: Fraction of capital to risk per trade (default: 0.02 = 2%)
             leverage: Leverage multiplier (default: 10 for futures)
             max_position_size: Max fraction of capital for position (default: 0.5 = 50%)
+            stop_loss: Stop-loss threshold (default: 0.02 = 2%)
+            take_profit: Take-profit threshold (default: 0.04 = 4%)
             fees: Transaction fee percentage per trade (default: 0.001 = 0.1%)
             reward_on_hold: Reward type when holding ('zero', 'unrealized', 'small_negative')
             render_mode: Rendering mode ('human' or None)
@@ -136,6 +155,8 @@ class PositionTradingEnv(gym.Env):
         self.risk_per_trade = risk_per_trade
         self.leverage = leverage
         self.max_position_size = max_position_size
+        self.stop_loss = stop_loss
+        self.take_profit = take_profit
         self.fees = fees
         self.reward_on_hold = reward_on_hold
         self.render_mode = render_mode
@@ -168,6 +189,8 @@ class PositionTradingEnv(gym.Env):
         self.entry_step = 0
         self.position_size = 0.0      # Size in USDT
         self.position_quantity = 0.0  # Quantity of asset
+        self.sl_price = 0.0           # Stop-loss trigger price
+        self.tp_price = 0.0           # Take-profit trigger price
         
         # Capital tracking
         self.balance = self.initial_capital
@@ -179,6 +202,9 @@ class PositionTradingEnv(gym.Env):
         self.realized_pnl_dollars = 0.0
         self.num_trades = 0
         self.winning_trades = 0
+        self.sl_triggered_count = 0
+        self.tp_triggered_count = 0
+        self.manual_close_count = 0
         self.max_drawdown = 0.0
         self.peak_equity = self.initial_capital
         self.action_history = []
@@ -215,6 +241,11 @@ class PositionTradingEnv(gym.Env):
         """
         Execute one step in the environment.
         
+        Order of operations:
+        1. Check if SL/TP triggered (using high/low prices)
+        2. If not triggered, process agent's action
+        3. Update equity and tracking
+        
         Args:
             action: Action to take (0=BUY, 1=SELL, 2=HOLD)
             
@@ -226,53 +257,51 @@ class PositionTradingEnv(gym.Env):
             raise ValueError(f"Invalid action: {action}. Must be in [0, 1, 2]")
         
         current_price = self.closes[self.current_step]
+        current_high = self.highs[self.current_step]
+        current_low = self.lows[self.current_step]
+        
         reward = 0.0
         pnl_dollars = 0.0
         trade_closed = False
+        exit_reason = None
         
-        # Process action based on current position
-        if self.position == self.FLAT:
-            # No position - can open LONG or SHORT
-            if action == self.BUY:
-                # Open LONG position
-                self._open_position(self.LONG, current_price)
-                reward = 0.0
-                
-            elif action == self.SELL:
-                # Open SHORT position
-                self._open_position(self.SHORT, current_price)
-                reward = 0.0
-                
-            else:  # HOLD
-                reward = self._get_hold_reward()
-                
-        elif self.position == self.LONG:
-            # Holding LONG - can HOLD or SELL to close
-            if action == self.SELL:
-                # Close LONG position
-                reward, pnl_dollars = self._close_position(current_price)
+        # Check SL/TP triggers FIRST (before processing action)
+        if self.position != self.FLAT:
+            sl_tp_result = self._check_sl_tp(current_high, current_low)
+            if sl_tp_result is not None:
+                reward, pnl_dollars, exit_reason = sl_tp_result
                 trade_closed = True
-                
-            elif action == self.BUY:
-                # Already LONG, treat as HOLD
-                reward = self._get_hold_reward(current_price)
-                
-            else:  # HOLD
-                reward = self._get_hold_reward(current_price)
-                
-        elif self.position == self.SHORT:
-            # Holding SHORT - can HOLD or BUY to close
-            if action == self.BUY:
-                # Close SHORT position
-                reward, pnl_dollars = self._close_position(current_price)
-                trade_closed = True
-                
-            elif action == self.SELL:
-                # Already SHORT, treat as HOLD
-                reward = self._get_hold_reward(current_price)
-                
-            else:  # HOLD
-                reward = self._get_hold_reward(current_price)
+        
+        # Process agent action only if position wasn't closed by SL/TP
+        if not trade_closed:
+            if self.position == self.FLAT:
+                # No position - can open LONG or SHORT
+                if action == self.BUY:
+                    self._open_position(self.LONG, current_price)
+                    reward = 0.0
+                elif action == self.SELL:
+                    self._open_position(self.SHORT, current_price)
+                    reward = 0.0
+                else:  # HOLD
+                    reward = self._get_hold_reward()
+                    
+            elif self.position == self.LONG:
+                if action == self.SELL:
+                    # Manual close LONG
+                    reward, pnl_dollars = self._close_position(current_price, self.EXIT_MANUAL)
+                    trade_closed = True
+                    exit_reason = self.EXIT_MANUAL
+                else:  # BUY or HOLD
+                    reward = self._get_hold_reward(current_price)
+                    
+            elif self.position == self.SHORT:
+                if action == self.BUY:
+                    # Manual close SHORT
+                    reward, pnl_dollars = self._close_position(current_price, self.EXIT_MANUAL)
+                    trade_closed = True
+                    exit_reason = self.EXIT_MANUAL
+                else:  # SELL or HOLD
+                    reward = self._get_hold_reward(current_price)
         
         # Update equity (balance + unrealized P&L)
         self._update_equity(current_price)
@@ -291,7 +320,7 @@ class PositionTradingEnv(gym.Env):
         # Force close position at end of episode
         if terminated and self.position != self.FLAT:
             final_price = self.closes[min(self.current_step, len(self.closes) - 1)]
-            final_reward, final_pnl_dollars = self._close_position(final_price)
+            final_reward, final_pnl_dollars = self._close_position(final_price, self.EXIT_END_EPISODE)
             self.total_reward += final_reward
         
         # Get next observation
@@ -305,33 +334,80 @@ class PositionTradingEnv(gym.Env):
         info['reward'] = reward
         info['pnl_dollars'] = pnl_dollars
         info['trade_closed'] = trade_closed
+        info['exit_reason'] = exit_reason
         
         return observation, reward, terminated, truncated, info
     
+    def _check_sl_tp(self, high: float, low: float) -> Optional[Tuple[float, float, str]]:
+        """
+        Check if Stop-Loss or Take-Profit is triggered.
+        
+        Uses high/low prices to check if SL/TP was hit during the candle.
+        
+        Returns:
+            None if not triggered, or (reward, pnl_dollars, exit_reason) tuple
+        """
+        if self.position == self.LONG:
+            # LONG: SL if low <= sl_price, TP if high >= tp_price
+            if low <= self.sl_price:
+                # Stop-loss triggered - exit at SL price
+                reward, pnl_dollars = self._close_position(self.sl_price, self.EXIT_STOP_LOSS)
+                return reward, pnl_dollars, self.EXIT_STOP_LOSS
+            elif high >= self.tp_price:
+                # Take-profit triggered - exit at TP price
+                reward, pnl_dollars = self._close_position(self.tp_price, self.EXIT_TAKE_PROFIT)
+                return reward, pnl_dollars, self.EXIT_TAKE_PROFIT
+                
+        elif self.position == self.SHORT:
+            # SHORT: SL if high >= sl_price, TP if low <= tp_price
+            if high >= self.sl_price:
+                # Stop-loss triggered - exit at SL price
+                reward, pnl_dollars = self._close_position(self.sl_price, self.EXIT_STOP_LOSS)
+                return reward, pnl_dollars, self.EXIT_STOP_LOSS
+            elif low <= self.tp_price:
+                # Take-profit triggered - exit at TP price
+                reward, pnl_dollars = self._close_position(self.tp_price, self.EXIT_TAKE_PROFIT)
+                return reward, pnl_dollars, self.EXIT_TAKE_PROFIT
+        
+        return None
+    
     def _open_position(self, position_type: int, price: float) -> None:
         """
-        Open a new position (LONG or SHORT).
+        Open a new position (LONG or SHORT) with SL/TP levels.
         
-        Position size is calculated as:
-        - Base size = balance * risk_per_trade
-        - With leverage = base_size * leverage
-        - Capped at max_position_size * balance
+        Position size is calculated based on risk per trade:
+        - With isolated margin, max loss = risk_per_trade * balance
+        - Position size = (balance * risk_per_trade / stop_loss) * leverage
         """
         self.position = position_type
         self.entry_price = price
         self.entry_step = self.current_step
         
-        # Calculate position size
+        # Calculate position size based on risk
+        # Max loss = balance * risk_per_trade
+        # Position size = max_loss / stop_loss * leverage (simplified)
         base_size = self.balance * self.risk_per_trade
         leveraged_size = base_size * self.leverage
         max_size = self.balance * self.max_position_size * self.leverage
         
         self.position_size = min(leveraged_size, max_size)
         self.position_quantity = self.position_size / price
+        
+        # Set SL/TP prices
+        if position_type == self.LONG:
+            self.sl_price = price * (1 - self.stop_loss)
+            self.tp_price = price * (1 + self.take_profit)
+        else:  # SHORT
+            self.sl_price = price * (1 + self.stop_loss)
+            self.tp_price = price * (1 - self.take_profit)
     
-    def _close_position(self, exit_price: float) -> Tuple[float, float]:
+    def _close_position(self, exit_price: float, exit_reason: str = EXIT_MANUAL) -> Tuple[float, float]:
         """
         Close current position and calculate P&L.
+        
+        Args:
+            exit_price: Price at which position is closed
+            exit_reason: Reason for closing (manual, stop_loss, take_profit, end_episode)
         
         Returns:
             Tuple of (log_return, pnl_dollars)
@@ -350,12 +426,21 @@ class PositionTradingEnv(gym.Env):
         # Update balance
         self.balance += pnl_dollars
         
+        # Update exit statistics
+        if exit_reason == self.EXIT_STOP_LOSS:
+            self.sl_triggered_count += 1
+        elif exit_reason == self.EXIT_TAKE_PROFIT:
+            self.tp_triggered_count += 1
+        elif exit_reason == self.EXIT_MANUAL:
+            self.manual_close_count += 1
+        
         # Record trade
         self._record_trade(
             'LONG' if self.position == self.LONG else 'SHORT',
             log_return,
             pnl_dollars,
-            exit_price
+            exit_price,
+            exit_reason
         )
         
         # Reset position
@@ -363,6 +448,8 @@ class PositionTradingEnv(gym.Env):
         self.entry_price = 0.0
         self.position_size = 0.0
         self.position_quantity = 0.0
+        self.sl_price = 0.0
+        self.tp_price = 0.0
         
         return log_return, pnl_dollars
     
@@ -413,6 +500,9 @@ class PositionTradingEnv(gym.Env):
             'position': self.POSITION_NAMES[self.position],
             'entry_price': self.entry_price,
             'current_price': current_price,
+            # SL/TP info
+            'sl_price': self.sl_price,
+            'tp_price': self.tp_price,
             # Capital info
             'balance': self.balance,
             'equity': self.equity,
@@ -429,6 +519,10 @@ class PositionTradingEnv(gym.Env):
             'win_rate': self.winning_trades / max(self.num_trades, 1),
             'roi': (self.balance - self.initial_capital) / self.initial_capital,
             'max_drawdown': self.max_drawdown,
+            # Exit statistics
+            'sl_triggered': self.sl_triggered_count,
+            'tp_triggered': self.tp_triggered_count,
+            'manual_closes': self.manual_close_count,
         }
         
         return info
@@ -474,7 +568,7 @@ class PositionTradingEnv(gym.Env):
             return 0.0
         return 0.0
     
-    def _record_trade(self, trade_type: str, pnl: float, pnl_dollars: float, exit_price: float) -> None:
+    def _record_trade(self, trade_type: str, pnl: float, pnl_dollars: float, exit_price: float, exit_reason: str = 'manual') -> None:
         """Record a completed trade."""
         self.num_trades += 1
         self.realized_pnl += pnl
@@ -489,10 +583,13 @@ class PositionTradingEnv(gym.Env):
             'exit_step': self.current_step,
             'entry_price': self.entry_price,
             'exit_price': exit_price,
+            'sl_price': self.sl_price,
+            'tp_price': self.tp_price,
             'position_size': self.position_size,
             'pnl': pnl,
             'pnl_dollars': pnl_dollars,
-            'holding_period': self.current_step - self.entry_step
+            'holding_period': self.current_step - self.entry_step,
+            'exit_reason': exit_reason
         })
     
     def render(self) -> None:
@@ -505,6 +602,7 @@ class PositionTradingEnv(gym.Env):
             print(f"Current Price: ${current_price:,.2f}")
             if self.position != self.FLAT:
                 print(f"Entry Price: ${self.entry_price:,.2f}")
+                print(f"SL: ${self.sl_price:,.2f} | TP: ${self.tp_price:,.2f}")
                 print(f"Position Size: ${self.position_size:,.2f}")
                 pct_return = (current_price - self.entry_price) / self.entry_price
                 if self.position == self.SHORT:
@@ -514,6 +612,7 @@ class PositionTradingEnv(gym.Env):
             print(f"Realized P&L: ${self.realized_pnl_dollars:,.2f}")
             print(f"ROI: {(self.balance - self.initial_capital) / self.initial_capital:.2%}")
             print(f"Trades: {self.num_trades} (Win rate: {self.winning_trades/max(self.num_trades,1):.1%})")
+            print(f"Exits - SL: {self.sl_triggered_count} | TP: {self.tp_triggered_count} | Manual: {self.manual_close_count}")
             print(f"Max Drawdown: {self.max_drawdown:.2%}")
             print("-" * 50)
     
@@ -531,6 +630,9 @@ class PositionTradingEnv(gym.Env):
                 'final_balance': self.balance,
                 'roi': 0.0,
                 'max_drawdown': self.max_drawdown,
+                'sl_triggered': 0,
+                'tp_triggered': 0,
+                'manual_closes': 0,
             }
         
         pnls = [t['pnl'] for t in self.trade_history]
@@ -554,6 +656,10 @@ class PositionTradingEnv(gym.Env):
             'final_balance': self.balance,
             'roi': (self.balance - self.initial_capital) / self.initial_capital,
             'max_drawdown': self.max_drawdown,
+            # Exit reason breakdown
+            'sl_triggered': self.sl_triggered_count,
+            'tp_triggered': self.tp_triggered_count,
+            'manual_closes': self.manual_close_count,
         }
     
     def get_action_distribution(self) -> Dict[str, float]:
@@ -607,13 +713,13 @@ def create_position_trading_env(
 
 
 if __name__ == '__main__':
-    # Test the position-based environment with capital management
+    # Test the position-based environment with SL/TP
     from data.datasets.utils import prepare_training_data
     
     print("Loading data...")
     data = prepare_training_data('data/datasets/BTC_processed.csv')
     
-    print("\nCreating position-based environment with capital management...")
+    print("\nCreating environment with SL/TP...")
     env = PositionTradingEnv(
         sequences=data['train']['sequences'],
         highs=data['train']['highs'],
@@ -621,54 +727,56 @@ if __name__ == '__main__':
         closes=data['train']['closes'],
         initial_capital=10000,
         risk_per_trade=0.02,
-        leverage=10
+        leverage=10,
+        stop_loss=0.02,    # 2% SL
+        take_profit=0.04   # 4% TP
     )
     
     print(f"Observation space: {env.observation_space}")
     print(f"Action space: {env.action_space}")
-    print(f"Episode length: {env.episode_length}")
     print(f"Initial capital: ${env.initial_capital:,.2f}")
     print(f"Risk per trade: {env.risk_per_trade:.1%}")
     print(f"Leverage: {env.leverage}x")
+    print(f"Stop-Loss: {env.stop_loss:.1%}")
+    print(f"Take-Profit: {env.take_profit:.1%}")
     
-    # Test trading sequence
-    print("\n--- Testing Trade Sequence ---")
+    # Test SL/TP triggers
+    print("\n--- Testing SL/TP System ---")
     obs, info = env.reset()
     print(f"Initial balance: ${info['balance']:,.2f}")
     
     # Open LONG
     obs, reward, _, _, info = env.step(0)  # BUY
-    print(f"After BUY:")
-    print(f"  Position: {info['position']}")
-    print(f"  Position size: ${info['position_size']:,.2f}")
+    print(f"\nAfter BUY:")
     print(f"  Entry price: ${info['entry_price']:,.2f}")
+    print(f"  SL price: ${info['sl_price']:,.2f} (-{env.stop_loss:.1%})")
+    print(f"  TP price: ${info['tp_price']:,.2f} (+{env.take_profit:.1%})")
     
-    # Hold
-    for _ in range(5):
-        obs, reward, _, _, info = env.step(2)  # HOLD
-    print(f"After 5 HOLDs:")
-    print(f"  Unrealized P&L: ${info['unrealized_pnl_dollars']:,.2f}")
-    print(f"  Equity: ${info['equity']:,.2f}")
+    # Hold until SL or TP triggers, or manual close
+    print("\n  Holding position...")
+    for i in range(100):
+        obs, reward, done, _, info = env.step(2)  # HOLD
+        
+        if info['trade_closed']:
+            print(f"  Position closed after {i+1} steps!")
+            print(f"  Exit reason: {info['exit_reason']}")
+            print(f"  P&L: ${info['pnl_dollars']:,.2f}")
+            break
+    else:
+        print(f"  Position still open after 100 steps")
+        print(f"  Unrealized P&L: ${info['unrealized_pnl_dollars']:,.2f}")
     
-    # Close LONG
-    obs, reward, _, _, info = env.step(1)  # SELL
-    print(f"After SELL (close):")
-    print(f"  Position: {info['position']}")
-    print(f"  P&L: ${info['pnl_dollars']:,.2f}")
-    print(f"  Balance: ${info['balance']:,.2f}")
-    
-    # Run longer test
-    print("\n--- Running 1000-step Episode ---")
+    # Run longer episode with random actions
+    print("\n--- Running 2000-step Episode ---")
     obs, _ = env.reset()
     
-    for step in range(min(1000, env.episode_length)):
-        # Simple strategy
+    for step in range(2000):
+        # Random entry, let SL/TP handle exit
         if env.position == env.FLAT:
-            action = env.BUY if step % 100 < 50 else env.SELL
-        elif env.position == env.LONG:
-            action = env.SELL if np.random.random() < 0.05 else env.HOLD
-        else:  # SHORT
-            action = env.BUY if np.random.random() < 0.05 else env.HOLD
+            action = np.random.choice([env.BUY, env.SELL])
+        else:
+            # 5% chance to manually close, otherwise hold
+            action = np.random.choice([env.BUY, env.SELL]) if np.random.random() < 0.05 else env.HOLD
         
         obs, reward, terminated, _, info = env.step(action)
         
@@ -680,8 +788,11 @@ if __name__ == '__main__':
     print(f"  Trades: {stats['num_trades']}")
     print(f"  Win Rate: {stats['win_rate']:.1%}")
     print(f"  Total P&L: ${stats['total_pnl_dollars']:,.2f}")
-    print(f"  Avg P&L per trade: ${stats['avg_pnl_dollars']:,.2f}")
     print(f"  Final Balance: ${stats['final_balance']:,.2f}")
     print(f"  ROI: {stats['roi']:.2%}")
     print(f"  Max Drawdown: {stats['max_drawdown']:.2%}")
-    print(f"  Avg Holding Period: {stats['avg_holding_period']:.1f} steps")
+    print(f"\nExit Breakdown:")
+    print(f"  Stop-Loss triggered: {stats['sl_triggered']}")
+    print(f"  Take-Profit triggered: {stats['tp_triggered']}")
+    print(f"  Manual closes: {stats['manual_closes']}")
+    print(f"\n  Avg Holding Period: {stats['avg_holding_period']:.1f} steps")
