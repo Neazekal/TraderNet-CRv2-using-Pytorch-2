@@ -86,7 +86,7 @@ pip install -r requirements.txt
 
 ## Phase 1: Data Download
 
-Download historical OHLCV data from Binance Futures.
+Download historical OHLCV and funding rate data from Binance Futures.
 
 ### Download all supported cryptocurrencies
 
@@ -94,7 +94,11 @@ Download historical OHLCV data from Binance Futures.
 python -m data.downloaders.binance
 ```
 
-This downloads hourly candles for all 7 cryptos from their Futures listing date to today.
+This downloads:
+- **OHLCV data**: Hourly candles (open, high, low, close, volume)
+- **Funding rate data**: 8-hour funding rates (collected every 8 hours)
+
+Data is fetched for all 7 cryptos from their Futures listing date to today.
 
 ### Download a single cryptocurrency
 
@@ -134,6 +138,12 @@ downloader.update('data/storage/BTC.csv')  # Fetches new candles since last time
 | TRX | TRX/USDT | 2020 |
 | DOGE | DOGE/USDT | 2021 |
 
+### Data Files
+
+After download, the following files are saved:
+- `data/storage/{CRYPTO}.csv` - OHLCV data (hourly candles)
+- `data/storage/{CRYPTO}_funding.csv` - Funding rate data (8-hour intervals)
+
 ---
 
 ## Phase 2: Data Preprocessing
@@ -169,9 +179,10 @@ The pipeline performs these steps:
 3. **Extract hour** - Temporal pattern (0-23)
 4. **Compute technical indicators** - 11 indicators
 5. **Compute derived features** - Price relative positions, volume acceleration
-6. **Detect market regime** - Classify market conditions
-7. **Min-Max scaling** - Normalize to [0, 1]
-8. **Drop NaN rows** - Remove indicator warm-up period
+6. **Detect market regime** - Classify market conditions (4 regimes)
+7. **Merge funding rate** - 8-hour funding data forward-filled to hourly
+8. **Min-Max scaling** - Normalize to [0, 1]
+9. **Drop NaN rows** - Remove indicator warm-up period
 
 ### Market Regime Detection
 
@@ -190,7 +201,7 @@ This lightweight approach (no HMM or complex models) provides regime awareness f
 - Be more aggressive in trending markets
 - Be cautious in high volatility periods
 
-### Features (20 total)
+### Features (21 total)
 
 | Category | Features |
 |----------|----------|
@@ -201,6 +212,16 @@ This lightweight approach (no HMM or complex models) provides regime awareness f
 | Price Relative (4) | close_dema, close_vwap, bband_up_close, close_bband_down |
 | Volume (2) | adl_diffs2, obv_diffs2 |
 | Regime (1) | regime_encoded (0=TRENDING_UP, 1=TRENDING_DOWN, 2=HIGH_VOLATILITY, 3=RANGING) |
+| Funding (1) | funding_rate (raw 8-hour funding rate, forward-filled) |
+
+### Funding Rate Feature
+
+Funding rate is a key sentiment indicator for futures trading:
+- **Positive funding**: Longs pay shorts - market is over-leveraged long (bullish sentiment)
+- **Negative funding**: Shorts pay longs - market is over-leveraged short (bearish sentiment)
+- **Near zero**: Balanced market
+
+The raw funding rate is used directly as it already provides meaningful signal.
 
 ### Prepare training data
 
@@ -226,8 +247,8 @@ eval_closes = data['eval']['closes']
 
 ### Sequence Format
 
-Each state is a sliding window of 12 hourly timesteps with 20 features:
-- Shape: `(num_samples, 12, 20)`
+Each state is a sliding window of 12 hourly timesteps with 21 features:
+- Shape: `(num_samples, 12, 21)`
 - Used as input to the Conv1D neural network
 
 ---
@@ -473,8 +494,8 @@ POSITION_SHORT = -1           # -1 = bearish
 POSITION_FLAT = 0             # 0 = neutral
 
 # Feature Engineering
-NUM_FEATURES = 19
-OBS_SHAPE = (12, 19)          # Observation shape for neural network
+NUM_FEATURES = 21
+OBS_SHAPE = (12, 21)          # Observation shape for neural network
 
 # Reward Settings
 SMURF_HOLD_REWARD = 0.0055    # Fixed HOLD reward for Smurf agent
@@ -571,7 +592,7 @@ print(f'Closed position, Final balance: \${info[\"balance\"]:,.2f}')
 
 Expected output:
 ```
-Observation space: Box(0.0, 1.0, (12, 19), float32)
+Observation space: Box(0.0, 1.0, (12, 21), float32)
 Action space: Discrete(3)
 Actions: LONG(0), SHORT(1), FLAT(2)
 Initial balance: $10,000.00
