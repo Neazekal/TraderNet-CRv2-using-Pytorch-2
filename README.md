@@ -15,7 +15,6 @@ Original TensorFlow implementation: [kochlisGit/TraderNet-CRv2](https://github.c
 - **Realistic Trading**: Position-based environment with capital management
 - **Risk Management**: Stop-Loss, Take-Profit, and leverage support
 - **Instant Position Flip**: Switch from LONG to SHORT (or vice versa) in one step
-- **N-Consecutive Rule**: Safety mechanism requiring N consecutive same actions
 - **Smurf Integration**: Conservative secondary agent for risk management
 - **Multi-Crypto Support**: BTC, ETH, XRP, SOL, BNB, TRX, DOGE
 
@@ -49,7 +48,6 @@ tradernet-pytorch/
 │       ├── market_limit.py        # MarketLimitOrder reward
 │       └── smurf.py               # Smurf conservative reward
 ├── agents/                        # (Phase 4+) PPO agent & networks
-├── rules/                         # (Phase 4+) N-Consecutive & Smurf
 ├── metrics/                       # (Phase 4+) Trading metrics
 ├── checkpoints/                   # Model checkpoints (gitignored)
 ├── IMPLEMENTATION_PLAN.md         # Detailed implementation plan
@@ -692,9 +690,8 @@ Closed position, Final balance: $9,975.21
 - [x] **Phase 3**: Trading environment & reward functions
 - [ ] **Phase 4**: Neural networks (Actor/Critic)
 - [ ] **Phase 5**: PPO agent implementation
-- [ ] **Phase 6**: Safety mechanisms (N-Consecutive, Smurf)
-- [ ] **Phase 7**: Training & evaluation scripts
-- [ ] **Phase 8**: Metrics & visualization
+- [ ] **Phase 6**: Training & evaluation scripts
+- [ ] **Phase 7**: Metrics & visualization
 
 ---
 

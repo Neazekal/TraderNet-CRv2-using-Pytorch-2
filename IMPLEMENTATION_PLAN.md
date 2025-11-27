@@ -390,59 +390,12 @@ loss = policy_loss + 0.5 * value_loss
 
 ---
 
-## Phase 6: Safety Mechanisms
+## Phase 6: Metrics & Evaluation
 
-### 6.1 N-Consecutive Rule
-```python
-class NConsecutive:
-    """
-    Only execute action if the agent suggests the same action
-    for N consecutive timesteps.
-    
-    Recommended window_size: 2-3
-    """
-    def __init__(self, window_size: int):
-        self._window_size = window_size
-        self._actions_queue = []
+(NOTE: N-Consecutive rule removed - not needed with new position-based action policy
+where LONG->LONG holds position, LONG->SHORT flips immediately, etc.)
 
-    def filter(self, action: int) -> int:
-        if len(self._actions_queue) < self._window_size:
-            self._actions_queue.insert(0, action)
-            return HOLD
-        
-        self._actions_queue.pop(-1)
-        self._actions_queue.insert(0, action)
-        return action if len(set(self._actions_queue)) == 1 else HOLD
-```
-
-### 6.2 Smurfing Mechanism
-- Train secondary "Smurf" agent with:
-  - Same architecture as TraderNet
-  - hold_reward = 0.0055 (positive, encourages holding)
-  - Results in more conservative behavior
-
-- During inference integration:
-```python
-def integrated_action(state, tradernet, smurf, n_consecutive):
-    # Step 1: Smurf check
-    smurf_action = smurf.get_action(state)
-    if smurf_action == HOLD:
-        return HOLD
-    
-    # Step 2: TraderNet decision
-    tradernet_action = tradernet.get_action(state)
-    
-    # Step 3: N-Consecutive filter
-    final_action = n_consecutive.filter(tradernet_action)
-    
-    return final_action
-```
-
----
-
-## Phase 7: Metrics & Evaluation
-
-### 7.1 Trading Metrics
+### 6.1 Trading Metrics
 
 | Metric | Formula |
 |--------|---------|
@@ -453,7 +406,7 @@ def integrated_action(state, tradernet, smurf, n_consecutive):
 | Sortino Ratio | `exp(mean(returns) / std(negative_returns))` |
 | Maximum Drawdown (MDD) | `1 - min(cumsum / peak)` |
 
-### 7.2 Metric Implementations
+### 6.2 Metric Implementations
 ```python
 class CumulativeLogReturn(Metric):
     def update(self, log_pnl: float):
@@ -480,27 +433,27 @@ class MaximumDrawdown(Metric):
 
 ---
 
-## Phase 8: Training Pipeline
+## Phase 7: Training Pipeline
 
-### 8.1 Data Split
+### 7.1 Data Split
 - Training: All data except last 2250 hours
 - Evaluation: Last 2250 hours (~3 months)
 - Different evaluation timelines per crypto to avoid overlapping market conditions
 
-### 8.2 Training Flow
+### 7.2 Training Flow
 1. Load preprocessed dataset
 2. Create train/eval environments
 3. Train TraderNet (PPO with MarketLimitOrder reward)
 4. Train Smurf (PPO with Smurf reward)
 5. Save best checkpoints by average return
 
-### 8.3 Integrated Evaluation
+### 7.3 Integrated Evaluation
 1. Load TraderNet and Smurf checkpoints
 2. Initialize N-Consecutive filter (window=2 or 3)
 3. Run integrated policy on evaluation set
 4. Compute all trading metrics
 
-### 8.4 Supported Cryptocurrencies
+### 7.4 Supported Cryptocurrencies
 ```python
 supported_cryptos = {
     'BTC': {'symbol': 'BTC/USDT', 'start_year': 2017},

@@ -181,12 +181,6 @@ DRAWDOWN_PENALTY_SCALE = 0.5        # Penalty multiplier (higher = more penalty)
 DRAWDOWN_PENALTY_MAX = 0.1          # Maximum penalty per step
 
 # =============================================================================
-# Safety Mechanisms
-# =============================================================================
-# N-Consecutive rule: require N consecutive same actions before executing
-N_CONSECUTIVE_WINDOW = 2
-
-# =============================================================================
 # PPO Hyperparameters
 # =============================================================================
 PPO_PARAMS = {
