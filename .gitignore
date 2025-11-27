@@ -39,6 +39,7 @@ env/
 data/storage/*.csv
 data/datasets/*.csv
 data/datasets/*.pkl
+data/storage/*.json
 
 # Model checkpoints
 checkpoints/*.pt
