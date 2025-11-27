@@ -22,13 +22,21 @@ SEQUENCE_LENGTH = 12      # N previous hours for state
 HORIZON = 20              # K hours lookahead for reward
 FEES = 0.01               # 1% transaction fee
 
-# Feature list (20 features)
+# Feature list (19 features)
 FEATURES = [
+    # Log returns (5)
     'open_log_returns', 'high_log_returns', 'low_log_returns',
-    'close_log_returns', 'volume_log_returns', 'hour',
-    'macd_signal_diffs', 'stoch', 'aroon_up', 'aroon_down',
-    'rsi', 'adx', 'cci', 'close_dema', 'close_vwap',
-    'bband_up_close', 'close_bband_down', 'adl_diffs2', 'obv_diffs2'
+    'close_log_returns', 'volume_log_returns',
+    # Time (1)
+    'hour',
+    # Technical indicators - Trend (4)
+    'macd_signal_diffs', 'aroon_up', 'aroon_down', 'adx',
+    # Technical indicators - Momentum (3)
+    'stoch', 'rsi', 'cci',
+    # Technical indicators - Price relative (4)
+    'close_dema', 'close_vwap', 'bband_up_close', 'close_bband_down',
+    # Technical indicators - Volume (2)
+    'adl_diffs2', 'obv_diffs2'
 ]
 
 # Technical indicator window parameters

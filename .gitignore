@@ -37,6 +37,8 @@ env/
 
 # Data files (large CSV files)
 data/storage/*.csv
+data/datasets/*.csv
+data/datasets/*.pkl
 
 # Model checkpoints
 checkpoints/*.pt
