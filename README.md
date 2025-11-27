@@ -10,8 +10,11 @@ Original TensorFlow implementation: [kochlisGit/TraderNet-CRv2](https://github.c
 
 ## Features
 
-- **PPO Agent**: Proximal Policy Optimization for trading decisions (BUY/SELL/HOLD)
+- **PPO Agent**: Proximal Policy Optimization for trading decisions (LONG/SHORT/FLAT)
 - **Technical Analysis**: 11 indicators (MACD, RSI, Bollinger Bands, ADX, etc.)
+- **Realistic Trading**: Position-based environment with capital management
+- **Risk Management**: Stop-Loss, Take-Profit, and leverage support
+- **Instant Position Flip**: Switch from LONG to SHORT (or vice versa) in one step
 - **N-Consecutive Rule**: Safety mechanism requiring N consecutive same actions
 - **Smurf Integration**: Conservative secondary agent for risk management
 - **Multi-Crypto Support**: BTC, ETH, XRP, SOL, BNB, TRX, DOGE
@@ -23,32 +26,33 @@ Original TensorFlow implementation: [kochlisGit/TraderNet-CRv2](https://github.c
 ```
 tradernet-pytorch/
 ├── config/
-│   └── config.py              # Centralized hyperparameters & settings
+│   └── config.py                  # Centralized hyperparameters & settings
 ├── data/
 │   ├── downloaders/
-│   │   └── binance.py         # CCXT Binance Futures downloader
+│   │   └── binance.py             # CCXT Binance Futures downloader
 │   ├── preprocessing/
-│   │   ├── ohlcv.py           # Log returns & hour extraction
-│   │   └── technical.py       # Derived features
+│   │   ├── ohlcv.py               # Log returns & hour extraction
+│   │   └── technical.py           # Derived features
 │   ├── datasets/
-│   │   ├── builder.py         # Dataset building pipeline
-│   │   └── utils.py           # Train/eval split utilities
-│   └── storage/               # Raw OHLCV data (gitignored)
+│   │   ├── builder.py             # Dataset building pipeline
+│   │   └── utils.py               # Train/eval split utilities
+│   └── storage/                   # Raw OHLCV data (gitignored)
 ├── analysis/
 │   └── technical/
-│       └── indicators_calc.py # Technical indicator calculations
+│       └── indicators_calc.py     # Technical indicator calculations
 ├── environments/
-│   ├── trading_env.py         # Gymnasium trading environment
+│   ├── trading_env.py             # Paper replication environment
+│   ├── position_trading_env.py    # Realistic trading environment
 │   └── rewards/
-│       ├── base.py            # Base reward class
-│       ├── market_limit.py    # MarketLimitOrder reward
-│       └── smurf.py           # Smurf conservative reward
-├── agents/                    # (Phase 4+) PPO agent & networks
-├── rules/                     # (Phase 4+) N-Consecutive & Smurf
-├── metrics/                   # (Phase 4+) Trading metrics
-├── checkpoints/               # Model checkpoints (gitignored)
-├── IMPLEMENTATION_PLAN.md     # Detailed implementation plan
-└── requirements.txt           # Python dependencies
+│       ├── base.py                # Base reward class
+│       ├── market_limit.py        # MarketLimitOrder reward
+│       └── smurf.py               # Smurf conservative reward
+├── agents/                        # (Phase 4+) PPO agent & networks
+├── rules/                         # (Phase 4+) N-Consecutive & Smurf
+├── metrics/                       # (Phase 4+) Trading metrics
+├── checkpoints/                   # Model checkpoints (gitignored)
+├── IMPLEMENTATION_PLAN.md         # Detailed implementation plan
+└── requirements.txt               # Python dependencies
 ```
 
 ---
@@ -224,10 +228,12 @@ env = create_trading_env('data/datasets/BTC_processed.csv', reward_type='market_
 
 ### 2. PositionTradingEnv (Realistic Trading)
 
-Position-based environment that simulates real trading:
-- Must open position before closing
-- HOLD keeps position open
-- Actual P&L calculated on close with fees
+Position-based environment that simulates real futures trading with:
+- Capital management (balance, position sizing)
+- Leverage support (isolated margin)
+- Stop-Loss and Take-Profit triggers
+- Instant position flipping (LONG to SHORT in one step)
+- Transaction fees on entry and exit
 
 ```python
 from environments.position_trading_env import create_position_trading_env
@@ -235,29 +241,138 @@ from environments.position_trading_env import create_position_trading_env
 env = create_position_trading_env('data/datasets/BTC_processed.csv')
 
 obs, info = env.reset()
+print(f"Balance: ${info['balance']:,.2f}")
 
 # Open LONG position
-obs, reward, _, _, info = env.step(0)  # BUY -> LONG
-print(info['position'])  # 'LONG'
+obs, reward, _, _, info = env.step(0)  # LONG action
+print(f"Position: {info['position']}, Entry: ${info['entry_price']:,.2f}")
+print(f"SL: ${info['sl_price']:,.2f}, TP: ${info['tp_price']:,.2f}")
 
-# Hold position
-obs, reward, _, _, info = env.step(2)  # HOLD
-print(info['unrealized_pnl'])  # Current P&L
+# Flip to SHORT (closes LONG, opens SHORT in one step)
+obs, reward, _, _, info = env.step(1)  # SHORT action
+print(f"Flipped: {info['flipped']}, P&L: ${info['pnl_dollars']:,.2f}")
 
-# Close position
-obs, reward, _, _, info = env.step(1)  # SELL -> FLAT
-print(reward)  # Realized P&L with fees
+# Close position (go FLAT)
+obs, reward, _, _, info = env.step(2)  # FLAT action
+print(f"Position: {info['position']}, Trade closed: {info['trade_closed']}")
 ```
 
-### Position States
+### Action Space
 
+**Gymnasium Actions** (what the agent outputs): `Discrete(3)` with values `{0, 1, 2}`
+
+| Gymnasium Action | Name | Description |
+|------------------|------|-------------|
+| 0 | LONG | Go/stay long |
+| 1 | SHORT | Go/stay short |
+| 2 | FLAT | Close position |
+
+**Position Values** (internal representation): `{+1, -1, 0}`
+
+| Position Value | Name | Meaning |
+|----------------|------|---------|
+| +1 | LONG | Bullish - profit when price goes up |
+| -1 | SHORT | Bearish - profit when price goes down |
+| 0 | FLAT | Neutral - no position |
+
+The sign indicates market direction, enabling math-friendly calculations:
+```python
+pnl = position * log(exit_price / entry_price)
+# LONG (+1):  +1 * log(exit/entry) = profit when price increases
+# SHORT (-1): -1 * log(exit/entry) = profit when price decreases
 ```
-FLAT  + BUY  -> LONG   (open long)
-FLAT  + SELL -> SHORT  (open short)
-LONG  + HOLD -> LONG   (keep holding)
-LONG  + SELL -> FLAT   (close long, get P&L)
-SHORT + HOLD -> SHORT  (keep holding)
-SHORT + BUY  -> FLAT   (close short, get P&L)
+
+**Action Matrix**:
+
+| Current Position | LONG Action | SHORT Action | FLAT Action |
+|------------------|-------------|--------------|-------------|
+| FLAT | Open LONG | Open SHORT | Do nothing |
+| LONG | Keep LONG | Flip to SHORT | Close LONG |
+| SHORT | Flip to LONG | Keep SHORT | Close SHORT |
+
+**Instant Flip**: When in LONG and taking SHORT action (or vice versa), the environment:
+1. Closes the current position (realizes P&L)
+2. Immediately opens a new position in the opposite direction
+
+This allows the agent to react instantly to market reversals without waiting.
+
+### Capital Management
+
+```python
+env = create_position_trading_env(
+    'data/datasets/BTC_processed.csv',
+    initial_capital=10000,   # Starting balance
+    risk_per_trade=0.02,     # Risk 2% of capital per trade
+    leverage=10              # 10x leverage (isolated margin)
+)
+```
+
+**Position Sizing**:
+- Position Size = Capital x Risk per Trade x Leverage
+- Example: $10,000 x 2% x 10 = $2,000 position size
+
+### Stop-Loss and Take-Profit
+
+Automatic SL/TP based on percentage from entry price:
+
+```python
+env = create_position_trading_env(
+    'data/datasets/BTC_processed.csv',
+    stop_loss=0.02,    # 2% stop-loss
+    take_profit=0.04   # 4% take-profit (2:1 reward-risk ratio)
+)
+```
+
+**SL/TP Behavior**:
+- Checked at each step using high/low prices (intra-candle triggers)
+- SL/TP triggers are processed BEFORE the agent's action
+- Maximum loss per trade is limited to risk_per_trade (isolated margin)
+
+### Exit Types
+
+| Exit Reason | Description |
+|-------------|-------------|
+| `stop_loss` | Price hit stop-loss level |
+| `take_profit` | Price hit take-profit level |
+| `flip` | Position flipped to opposite direction |
+| `manual` | Agent chose FLAT action |
+| `end_episode` | Episode ended with open position |
+
+### Info Dictionary
+
+The environment returns detailed information:
+
+```python
+info = {
+    # Position
+    'position': 'LONG',           # FLAT, LONG, or SHORT
+    'position_value': 1,          # +1 (LONG), -1 (SHORT), 0 (FLAT)
+    'entry_price': 50000.0,
+    'sl_price': 49000.0,
+    'tp_price': 52000.0,
+    
+    # Capital
+    'balance': 10000.0,
+    'equity': 10150.0,            # Balance + unrealized P&L
+    'position_size': 2000.0,
+    
+    # P&L
+    'unrealized_pnl': 0.015,      # Log return
+    'unrealized_pnl_dollars': 30.0,
+    'realized_pnl_dollars': 0.0,
+    
+    # Statistics
+    'num_trades': 5,
+    'win_rate': 0.6,
+    'roi': 0.015,
+    'max_drawdown': 0.02,
+    
+    # Exit info (when trade closes)
+    'trade_closed': True,
+    'exit_reason': 'take_profit',
+    'flipped': False,
+    'pnl_dollars': 80.0,
+}
 ```
 
 ### Environment Comparison
@@ -265,7 +380,10 @@ SHORT + BUY  -> FLAT   (close short, get P&L)
 | Feature | TradingEnv | PositionTradingEnv |
 |---------|------------|-------------------|
 | Position tracking | No | Yes (FLAT/LONG/SHORT) |
-| HOLD behavior | Independent step | Maintains position |
+| Capital management | No | Yes (balance, equity) |
+| Leverage | No | Yes (configurable) |
+| Stop-Loss/Take-Profit | No | Yes (auto-trigger) |
+| Instant flip | N/A | Yes (LONG to SHORT) |
 | Rewards | Potential profit | Actual P&L on close |
 | Fees | Once per step | On open + close |
 | Use case | Paper replication | Realistic trading |
@@ -293,7 +411,17 @@ TIMEFRAME = '1h'
 SEQUENCE_LENGTH = 12          # State window size (N hours)
 HORIZON = 20                  # Reward lookahead (K hours)
 FEES = 0.01                   # Transaction fee (1%)
-NUM_ACTIONS = 3               # BUY, SELL, HOLD
+NUM_ACTIONS = 3               # LONG, SHORT, FLAT
+
+# Gymnasium action indices
+ACTION_LONG = 0               # Agent outputs 0 for LONG
+ACTION_SHORT = 1              # Agent outputs 1 for SHORT
+ACTION_FLAT = 2               # Agent outputs 2 for FLAT
+
+# Position values (for calculations)
+POSITION_LONG = 1             # +1 = bullish
+POSITION_SHORT = -1           # -1 = bearish
+POSITION_FLAT = 0             # 0 = neutral
 
 # Feature Engineering
 NUM_FEATURES = 19
@@ -301,6 +429,15 @@ OBS_SHAPE = (12, 19)          # Observation shape for neural network
 
 # Reward Settings
 SMURF_HOLD_REWARD = 0.0055    # Fixed HOLD reward for Smurf agent
+
+# Trading Settings (PositionTradingEnv)
+TRADING_PARAMS = {
+    'initial_capital': 10000,   # Starting balance in USD
+    'risk_per_trade': 0.02,     # Risk 2% of capital per trade
+    'leverage': 10,             # 10x leverage (isolated margin)
+    'stop_loss': 0.02,          # 2% stop-loss from entry
+    'take_profit': 0.04,        # 4% take-profit from entry (2:1 RR)
+}
 
 # PPO Hyperparameters
 PPO_PARAMS = {
@@ -353,19 +490,27 @@ python -m data.datasets.builder
 
 # 4. Test the trading environment
 python -c "
-from environments.trading_env import create_trading_env
+from environments.position_trading_env import create_position_trading_env
 
-env = create_trading_env('data/datasets/BTC_processed.csv')
+env = create_position_trading_env('data/datasets/BTC_processed.csv')
 print(f'Observation space: {env.observation_space}')
 print(f'Action space: {env.action_space}')
-print(f'Episode length: {env.episode_length}')
+print(f'Actions: LONG(0), SHORT(1), FLAT(2)')
 
-# Run a few steps
 obs, info = env.reset()
-for _ in range(10):
-    action = env.action_space.sample()
-    obs, reward, done, _, info = env.step(action)
-    print(f'Action: {info[\"action\"]}, Reward: {reward:.4f}')
+print(f'Initial balance: \${info[\"balance\"]:,.2f}')
+
+# Open LONG
+obs, reward, _, _, info = env.step(0)
+print(f'Opened LONG at \${info[\"entry_price\"]:,.2f}')
+
+# Flip to SHORT
+obs, reward, _, _, info = env.step(1)
+print(f'Flipped to SHORT, P&L: \${info[\"pnl_dollars\"]:,.2f}')
+
+# Close position
+obs, reward, _, _, info = env.step(2)
+print(f'Closed position, Final balance: \${info[\"balance\"]:,.2f}')
 "
 ```
 
@@ -373,10 +518,11 @@ Expected output:
 ```
 Observation space: Box(0.0, 1.0, (12, 19), float32)
 Action space: Discrete(3)
-Episode length: 54451
-Action: HOLD, Reward: -0.0155
-Action: BUY, Reward: 0.0123
-...
+Actions: LONG(0), SHORT(1), FLAT(2)
+Initial balance: $10,000.00
+Opened LONG at $50,123.45
+Flipped to SHORT, P&L: $-12.34
+Closed position, Final balance: $9,975.21
 ```
 
 ---

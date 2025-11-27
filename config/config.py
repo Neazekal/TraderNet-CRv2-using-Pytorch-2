@@ -37,12 +37,44 @@ SEQUENCE_LENGTH = 12            # N previous hours for state observation
 HORIZON = 20                    # K hours lookahead for reward calculation
 FEES = 0.001                    # Transaction fee (0.1% = 0.001 for Binance Futures)
 
-# Action space
+# Action space (Position-based actions)
+# Gymnasium uses Discrete(3) with {0, 1, 2}, we map to intuitive position values
+# LONG: Open or keep LONG position (flip from SHORT if needed)
+# SHORT: Open or keep SHORT position (flip from LONG if needed)
+# FLAT: Close any position and go flat
 NUM_ACTIONS = 3
-ACTION_BUY = 0
-ACTION_SELL = 1
-ACTION_HOLD = 2
-ACTION_NAMES = {0: 'BUY', 1: 'SELL', 2: 'HOLD'}
+
+# Gymnasium action indices (what the agent outputs)
+ACTION_LONG = 0   # Agent outputs 0 for LONG
+ACTION_SHORT = 1  # Agent outputs 1 for SHORT
+ACTION_FLAT = 2   # Agent outputs 2 for FLAT
+ACTION_NAMES = {0: 'LONG', 1: 'SHORT', 2: 'FLAT'}
+
+# Position values (intuitive representation for calculations)
+# Sign indicates market direction: +1 bullish, -1 bearish, 0 neutral
+POSITION_LONG = 1     # +1 = bullish/long
+POSITION_SHORT = -1   # -1 = bearish/short
+POSITION_FLAT = 0     # 0 = neutral/no position
+POSITION_NAMES = {1: 'LONG', -1: 'SHORT', 0: 'FLAT'}
+
+# Mapping: Gymnasium action -> Position value
+ACTION_TO_POSITION = {
+    ACTION_LONG: POSITION_LONG,    # 0 -> +1
+    ACTION_SHORT: POSITION_SHORT,  # 1 -> -1
+    ACTION_FLAT: POSITION_FLAT,    # 2 -> 0
+}
+
+# Reverse mapping: Position value -> Gymnasium action
+POSITION_TO_ACTION = {
+    POSITION_LONG: ACTION_LONG,    # +1 -> 0
+    POSITION_SHORT: ACTION_SHORT,  # -1 -> 1
+    POSITION_FLAT: ACTION_FLAT,    # 0 -> 2
+}
+
+# Legacy aliases for backward compatibility
+ACTION_BUY = ACTION_LONG
+ACTION_SELL = ACTION_SHORT
+ACTION_HOLD = ACTION_FLAT
 
 # =============================================================================
 # Capital Management (Position Trading)

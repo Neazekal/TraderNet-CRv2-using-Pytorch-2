@@ -1,13 +1,14 @@
 """
 Position-Based Trading Environment Module.
 
-A more realistic trading environment that tracks positions with capital management:
+A realistic trading environment with instant position flipping:
 - FLAT: No position open
-- LONG: Bought, waiting to sell
-- SHORT: Sold, waiting to buy back
+- LONG: Holding long position
+- SHORT: Holding short position
 
 Features:
 - Position tracking (FLAT/LONG/SHORT)
+- Instant position flipping (LONG→SHORT or SHORT→LONG in 1 step)
 - Capital management (balance, position sizing)
 - Leverage support for futures trading
 - Risk per trade control (isolated margin)
@@ -26,7 +27,9 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from config.config import (
     FEATURES, SEQUENCE_LENGTH, FEES,
-    NUM_ACTIONS, ACTION_BUY, ACTION_SELL, ACTION_HOLD, ACTION_NAMES,
+    NUM_ACTIONS, ACTION_LONG, ACTION_SHORT, ACTION_FLAT, ACTION_NAMES,
+    POSITION_LONG, POSITION_SHORT, POSITION_FLAT, POSITION_NAMES,
+    ACTION_TO_POSITION,
     INITIAL_CAPITAL, RISK_PER_TRADE, LEVERAGE, MAX_POSITION_SIZE,
     STOP_LOSS, TAKE_PROFIT
 )
@@ -34,28 +37,44 @@ from config.config import (
 
 class PositionTradingEnv(gym.Env):
     """
-    Position-based trading environment with capital management and SL/TP.
+    Position-based trading environment with instant flip capability.
     
     Simulates realistic futures trading with:
     - Position tracking (FLAT/LONG/SHORT)
+    - Instant position flipping (no waiting)
     - Capital and balance management
     - Leverage support (isolated margin)
     - Risk-based position sizing
     - Stop-Loss and Take-Profit auto-close
     - Actual P&L calculation in dollars
     
-    Position States:
-        FLAT (0):  No position - can open LONG or SHORT
-        LONG (1):  Holding buy position - can HOLD or SELL to close
-        SHORT (2): Holding sell position - can HOLD or BUY to close
+    Position Values (intuitive for calculations):
+        FLAT (0):   No position open - neutral
+        LONG (+1):  Holding long position - bullish
+        SHORT (-1): Holding short position - bearish
+        
+    The sign indicates market direction:
+        - Positive (+1) = bullish/long
+        - Negative (-1) = bearish/short  
+        - Zero (0) = neutral/flat
+        
+    This allows math-friendly calculations:
+        pnl = position * price_change
     
-    Actions:
-        BUY (0):  Open LONG (if FLAT) or Close SHORT (if SHORT)
-        SELL (1): Open SHORT (if FLAT) or Close LONG (if LONG)
-        HOLD (2): Maintain current position
+    Actions (Gymnasium Discrete(3)):
+        0 = LONG:  Go/Stay LONG - Opens LONG if FLAT, keeps if LONG, flips if SHORT
+        1 = SHORT: Go/Stay SHORT - Opens SHORT if FLAT, keeps if SHORT, flips if LONG
+        2 = FLAT:  Go FLAT - Closes any open position
+    
+    Action Matrix:
+        Current | LONG action | SHORT action | FLAT action
+        --------|-------------|--------------|-------------
+        FLAT    | Open LONG   | Open SHORT   | Do nothing
+        LONG    | Keep LONG   | Flip→SHORT   | Close LONG
+        SHORT   | Flip→LONG   | Keep SHORT   | Close SHORT
     
     Exit Conditions (checked each step):
-        1. Agent manually closes (SELL when LONG, BUY when SHORT)
+        1. Agent action (FLAT or flip to opposite)
         2. Take-Profit triggered (price reaches +TP%)
         3. Stop-Loss triggered (price reaches -SL%)
     
@@ -81,31 +100,30 @@ class PositionTradingEnv(gym.Env):
         )
         obs, info = env.reset()
         
-        obs, reward, _, _, info = env.step(0)  # BUY -> LONG
-        # Position auto-closes if:
-        # - Price drops 2% (SL)
-        # - Price rises 4% (TP)
-        # - Agent calls SELL (manual)
+        obs, reward, _, _, info = env.step(0)  # LONG action -> Open LONG
+        obs, reward, _, _, info = env.step(1)  # SHORT action -> Flip to SHORT (instant!)
+        obs, reward, _, _, info = env.step(2)  # FLAT action -> Close SHORT
     """
     
     metadata = {'render_modes': ['human']}
     
-    # Position states
-    FLAT = 0
-    LONG = 1
-    SHORT = 2
-    POSITION_NAMES = {0: 'FLAT', 1: 'LONG', 2: 'SHORT'}
+    # Position values (intuitive: +1 long, -1 short, 0 flat)
+    FLAT = POSITION_FLAT    # 0
+    LONG = POSITION_LONG    # +1
+    SHORT = POSITION_SHORT  # -1
+    POSITION_NAMES = POSITION_NAMES  # {1: 'LONG', -1: 'SHORT', 0: 'FLAT'}
     
     # Exit reasons
     EXIT_MANUAL = 'manual'
+    EXIT_FLIP = 'flip'
     EXIT_STOP_LOSS = 'stop_loss'
     EXIT_TAKE_PROFIT = 'take_profit'
     EXIT_END_EPISODE = 'end_episode'
     
-    # Action constants (from config)
-    BUY = ACTION_BUY
-    SELL = ACTION_SELL
-    HOLD = ACTION_HOLD
+    # Action constants (Gymnasium indices)
+    ACT_LONG = ACTION_LONG    # 0
+    ACT_SHORT = ACTION_SHORT  # 1
+    ACT_FLAT = ACTION_FLAT    # 2
     ACTION_NAMES = ACTION_NAMES
     
     def __init__(
@@ -205,6 +223,7 @@ class PositionTradingEnv(gym.Env):
         self.sl_triggered_count = 0
         self.tp_triggered_count = 0
         self.manual_close_count = 0
+        self.flip_count = 0
         self.max_drawdown = 0.0
         self.peak_equity = self.initial_capital
         self.action_history = []
@@ -246,8 +265,15 @@ class PositionTradingEnv(gym.Env):
         2. If not triggered, process agent's action
         3. Update equity and tracking
         
+        Action Matrix:
+            Current | LONG(0)     | SHORT(1)    | FLAT(2)
+            --------|-------------|-------------|------------
+            FLAT    | Open LONG   | Open SHORT  | Do nothing
+            LONG    | Keep LONG   | Flip→SHORT  | Close LONG
+            SHORT   | Flip→LONG   | Keep SHORT  | Close SHORT
+        
         Args:
-            action: Action to take (0=BUY, 1=SELL, 2=HOLD)
+            action: Action to take (0=LONG, 1=SHORT, 2=FLAT)
             
         Returns:
             Tuple of (observation, reward, terminated, truncated, info)
@@ -264,6 +290,7 @@ class PositionTradingEnv(gym.Env):
         pnl_dollars = 0.0
         trade_closed = False
         exit_reason = None
+        flipped = False
         
         # Check SL/TP triggers FIRST (before processing action)
         if self.position != self.FLAT:
@@ -275,33 +302,47 @@ class PositionTradingEnv(gym.Env):
         # Process agent action only if position wasn't closed by SL/TP
         if not trade_closed:
             if self.position == self.FLAT:
-                # No position - can open LONG or SHORT
-                if action == self.BUY:
+                # FLAT: Can open LONG or SHORT, or stay FLAT
+                if action == self.ACT_LONG:
                     self._open_position(self.LONG, current_price)
                     reward = 0.0
-                elif action == self.SELL:
+                elif action == self.ACT_SHORT:
                     self._open_position(self.SHORT, current_price)
                     reward = 0.0
-                else:  # HOLD
-                    reward = self._get_hold_reward()
+                else:  # ACT_FLAT
+                    reward = 0.0  # Do nothing
                     
             elif self.position == self.LONG:
-                if action == self.SELL:
-                    # Manual close LONG
+                if action == self.ACT_SHORT:
+                    # Flip LONG → SHORT (close LONG, open SHORT)
+                    reward, pnl_dollars = self._close_position(current_price, self.EXIT_FLIP)
+                    self._open_position(self.SHORT, current_price)
+                    trade_closed = True
+                    exit_reason = self.EXIT_FLIP
+                    flipped = True
+                elif action == self.ACT_FLAT:
+                    # Close LONG, go FLAT
                     reward, pnl_dollars = self._close_position(current_price, self.EXIT_MANUAL)
                     trade_closed = True
                     exit_reason = self.EXIT_MANUAL
-                else:  # BUY or HOLD
-                    reward = self._get_hold_reward(current_price)
+                else:  # ACT_LONG
+                    reward = self._get_hold_reward(current_price)  # Keep LONG
                     
             elif self.position == self.SHORT:
-                if action == self.BUY:
-                    # Manual close SHORT
+                if action == self.ACT_LONG:
+                    # Flip SHORT → LONG (close SHORT, open LONG)
+                    reward, pnl_dollars = self._close_position(current_price, self.EXIT_FLIP)
+                    self._open_position(self.LONG, current_price)
+                    trade_closed = True
+                    exit_reason = self.EXIT_FLIP
+                    flipped = True
+                elif action == self.ACT_FLAT:
+                    # Close SHORT, go FLAT
                     reward, pnl_dollars = self._close_position(current_price, self.EXIT_MANUAL)
                     trade_closed = True
                     exit_reason = self.EXIT_MANUAL
-                else:  # SELL or HOLD
-                    reward = self._get_hold_reward(current_price)
+                else:  # ACT_SHORT
+                    reward = self._get_hold_reward(current_price)  # Keep SHORT
         
         # Update equity (balance + unrealized P&L)
         self._update_equity(current_price)
@@ -335,6 +376,7 @@ class PositionTradingEnv(gym.Env):
         info['pnl_dollars'] = pnl_dollars
         info['trade_closed'] = trade_closed
         info['exit_reason'] = exit_reason
+        info['flipped'] = flipped
         
         return observation, reward, terminated, truncated, info
     
@@ -405,6 +447,9 @@ class PositionTradingEnv(gym.Env):
         """
         Close current position and calculate P&L.
         
+        Uses unified P&L calculation with position direction:
+        P&L = position * log(exit_price / entry_price) - 2 * fees
+        
         Args:
             exit_price: Price at which position is closed
             exit_reason: Reason for closing (manual, stop_loss, take_profit, end_episode)
@@ -412,10 +457,8 @@ class PositionTradingEnv(gym.Env):
         Returns:
             Tuple of (log_return, pnl_dollars)
         """
-        if self.position == self.LONG:
-            log_return = self._calculate_long_pnl(exit_price)
-        else:  # SHORT
-            log_return = self._calculate_short_pnl(exit_price)
+        # Use unified calculation with position direction
+        log_return = self._calculate_pnl(exit_price)
         
         # Convert log return to percentage return
         pct_return = np.exp(log_return) - 1
@@ -433,10 +476,12 @@ class PositionTradingEnv(gym.Env):
             self.tp_triggered_count += 1
         elif exit_reason == self.EXIT_MANUAL:
             self.manual_close_count += 1
+        elif exit_reason == self.EXIT_FLIP:
+            self.flip_count += 1
         
         # Record trade
         self._record_trade(
-            'LONG' if self.position == self.LONG else 'SHORT',
+            self.POSITION_NAMES[self.position],  # 'LONG' or 'SHORT'
             log_return,
             pnl_dollars,
             exit_price,
@@ -454,14 +499,18 @@ class PositionTradingEnv(gym.Env):
         return log_return, pnl_dollars
     
     def _update_equity(self, current_price: float) -> None:
-        """Update equity (balance + unrealized P&L) and track drawdown."""
+        """
+        Update equity (balance + unrealized P&L) and track drawdown.
+        
+        Uses position direction for unified calculation:
+        unrealized_pnl = position * (current_price - entry_price) / entry_price
+        """
         unrealized_pnl = 0.0
         
-        if self.position == self.LONG:
-            pct_return = (current_price - self.entry_price) / self.entry_price
-            unrealized_pnl = self.position_size * pct_return
-        elif self.position == self.SHORT:
-            pct_return = (self.entry_price - current_price) / self.entry_price
+        if self.position != self.FLAT and self.entry_price > 0:
+            # Unified calculation using position direction
+            pct_change = (current_price - self.entry_price) / self.entry_price
+            pct_return = self.position * pct_change  # position is +1 or -1
             unrealized_pnl = self.position_size * pct_return
         
         self.equity = self.balance + unrealized_pnl
@@ -482,22 +531,23 @@ class PositionTradingEnv(gym.Env):
         """Get current info dictionary."""
         current_price = self.closes[min(self.current_step, len(self.closes) - 1)]
         
-        # Calculate unrealized P&L
+        # Calculate unrealized P&L using position direction
         unrealized_pnl = 0.0
         unrealized_pnl_dollars = 0.0
         
-        if self.position == self.LONG:
-            unrealized_pnl = self._calculate_long_pnl(current_price)
-            pct_return = (current_price - self.entry_price) / self.entry_price
-            unrealized_pnl_dollars = self.position_size * pct_return
-        elif self.position == self.SHORT:
-            unrealized_pnl = self._calculate_short_pnl(current_price)
-            pct_return = (self.entry_price - current_price) / self.entry_price
+        if self.position != self.FLAT and self.entry_price > 0:
+            # Unified calculation using position direction
+            log_return = np.log(current_price / self.entry_price)
+            unrealized_pnl = self.position * log_return  # position is +1 or -1
+            
+            pct_change = (current_price - self.entry_price) / self.entry_price
+            pct_return = self.position * pct_change
             unrealized_pnl_dollars = self.position_size * pct_return
         
         info = {
             'step': self.current_step,
             'position': self.POSITION_NAMES[self.position],
+            'position_value': self.position,  # +1, -1, or 0
             'entry_price': self.entry_price,
             'current_price': current_price,
             # SL/TP info
@@ -523,6 +573,7 @@ class PositionTradingEnv(gym.Env):
             'sl_triggered': self.sl_triggered_count,
             'tp_triggered': self.tp_triggered_count,
             'manual_closes': self.manual_close_count,
+            'flips': self.flip_count,
         }
         
         return info
@@ -532,6 +583,9 @@ class PositionTradingEnv(gym.Env):
         Calculate log return P&L for closing a LONG position.
         
         P&L = log(exit_price / entry_price) - 2 * fees
+        
+        With position value (+1), can also be computed as:
+        P&L = position * log(exit_price / entry_price) - 2 * fees
         """
         if self.entry_price <= 0:
             return 0.0
@@ -547,11 +601,36 @@ class PositionTradingEnv(gym.Env):
         Calculate log return P&L for closing a SHORT position.
         
         P&L = log(entry_price / exit_price) - 2 * fees
+             = -log(exit_price / entry_price) - 2 * fees
+        
+        With position value (-1), can also be computed as:
+        P&L = position * log(exit_price / entry_price) - 2 * fees
         """
         if self.entry_price <= 0:
             return 0.0
         
         gross_pnl = np.log(self.entry_price / exit_price)
+        fee_cost = 2 * self.fees
+        net_pnl = gross_pnl - fee_cost
+        
+        return float(net_pnl)
+    
+    def _calculate_pnl(self, exit_price: float) -> float:
+        """
+        Calculate P&L using position direction.
+        
+        Unified formula using position value {+1, -1, 0}:
+        P&L = position * log(exit_price / entry_price) - 2 * fees
+        
+        This works because:
+        - LONG (+1):  +1 * log(exit/entry) = profit when price goes up
+        - SHORT (-1): -1 * log(exit/entry) = profit when price goes down
+        """
+        if self.entry_price <= 0 or self.position == self.FLAT:
+            return 0.0
+        
+        log_return = np.log(exit_price / self.entry_price)
+        gross_pnl = self.position * log_return  # position is +1 or -1
         fee_cost = 2 * self.fees
         net_pnl = gross_pnl - fee_cost
         
@@ -598,21 +677,21 @@ class PositionTradingEnv(gym.Env):
             current_price = self.closes[min(self.current_step, len(self.closes) - 1)]
             print(f"Step: {self.current_step}/{self.max_step}")
             print(f"Balance: ${self.balance:,.2f} | Equity: ${self.equity:,.2f}")
-            print(f"Position: {self.POSITION_NAMES[self.position]}")
+            print(f"Position: {self.POSITION_NAMES[self.position]} ({self.position:+d})")
             print(f"Current Price: ${current_price:,.2f}")
             if self.position != self.FLAT:
                 print(f"Entry Price: ${self.entry_price:,.2f}")
                 print(f"SL: ${self.sl_price:,.2f} | TP: ${self.tp_price:,.2f}")
                 print(f"Position Size: ${self.position_size:,.2f}")
-                pct_return = (current_price - self.entry_price) / self.entry_price
-                if self.position == self.SHORT:
-                    pct_return = -pct_return
+                # Unified P&L calculation using position direction
+                pct_change = (current_price - self.entry_price) / self.entry_price
+                pct_return = self.position * pct_change
                 unrealized = self.position_size * pct_return
                 print(f"Unrealized P&L: ${unrealized:,.2f} ({pct_return:.2%})")
             print(f"Realized P&L: ${self.realized_pnl_dollars:,.2f}")
             print(f"ROI: {(self.balance - self.initial_capital) / self.initial_capital:.2%}")
             print(f"Trades: {self.num_trades} (Win rate: {self.winning_trades/max(self.num_trades,1):.1%})")
-            print(f"Exits - SL: {self.sl_triggered_count} | TP: {self.tp_triggered_count} | Manual: {self.manual_close_count}")
+            print(f"Exits - SL: {self.sl_triggered_count} | TP: {self.tp_triggered_count} | Flip: {self.flip_count} | Manual: {self.manual_close_count}")
             print(f"Max Drawdown: {self.max_drawdown:.2%}")
             print("-" * 50)
     
@@ -633,6 +712,7 @@ class PositionTradingEnv(gym.Env):
                 'sl_triggered': 0,
                 'tp_triggered': 0,
                 'manual_closes': 0,
+                'flips': 0,
             }
         
         pnls = [t['pnl'] for t in self.trade_history]
@@ -660,18 +740,19 @@ class PositionTradingEnv(gym.Env):
             'sl_triggered': self.sl_triggered_count,
             'tp_triggered': self.tp_triggered_count,
             'manual_closes': self.manual_close_count,
+            'flips': self.flip_count,
         }
     
     def get_action_distribution(self) -> Dict[str, float]:
         """Get the distribution of actions taken."""
         if not self.action_history:
-            return {'BUY': 0.0, 'SELL': 0.0, 'HOLD': 0.0}
+            return {'LONG': 0.0, 'SHORT': 0.0, 'FLAT': 0.0}
         
         total = len(self.action_history)
         return {
-            'BUY': self.action_history.count(self.BUY) / total,
-            'SELL': self.action_history.count(self.SELL) / total,
-            'HOLD': self.action_history.count(self.HOLD) / total
+            'LONG': self.action_history.count(self.ACT_LONG) / total,
+            'SHORT': self.action_history.count(self.ACT_SHORT) / total,
+            'FLAT': self.action_history.count(self.ACT_FLAT) / total
         }
     
     @property
@@ -713,13 +794,13 @@ def create_position_trading_env(
 
 
 if __name__ == '__main__':
-    # Test the position-based environment with SL/TP
+    # Test the position-based environment with instant flip
     from data.datasets.utils import prepare_training_data
     
     print("Loading data...")
     data = prepare_training_data('data/datasets/BTC_processed.csv')
     
-    print("\nCreating environment with SL/TP...")
+    print("\nCreating environment with instant flip...")
     env = PositionTradingEnv(
         sequences=data['train']['sequences'],
         highs=data['train']['highs'],
@@ -734,50 +815,54 @@ if __name__ == '__main__':
     
     print(f"Observation space: {env.observation_space}")
     print(f"Action space: {env.action_space}")
+    print(f"Actions (Gymnasium): LONG(0), SHORT(1), FLAT(2)")
+    print(f"Position values: LONG(+1), SHORT(-1), FLAT(0)")
     print(f"Initial capital: ${env.initial_capital:,.2f}")
-    print(f"Risk per trade: {env.risk_per_trade:.1%}")
-    print(f"Leverage: {env.leverage}x")
-    print(f"Stop-Loss: {env.stop_loss:.1%}")
-    print(f"Take-Profit: {env.take_profit:.1%}")
+    print(f"Stop-Loss: {env.stop_loss:.1%} | Take-Profit: {env.take_profit:.1%}")
     
-    # Test SL/TP triggers
-    print("\n--- Testing SL/TP System ---")
+    # Test instant flip
+    print("\n--- Testing Instant Flip with New Position Values ---")
     obs, info = env.reset()
-    print(f"Initial balance: ${info['balance']:,.2f}")
+    print(f"Initial: {info['position']} (value={info['position_value']:+d}), Balance: ${info['balance']:,.2f}")
     
-    # Open LONG
-    obs, reward, _, _, info = env.step(0)  # BUY
-    print(f"\nAfter BUY:")
-    print(f"  Entry price: ${info['entry_price']:,.2f}")
-    print(f"  SL price: ${info['sl_price']:,.2f} (-{env.stop_loss:.1%})")
-    print(f"  TP price: ${info['tp_price']:,.2f} (+{env.take_profit:.1%})")
+    # LONG action -> Open LONG
+    obs, reward, _, _, info = env.step(env.ACT_LONG)
+    print(f"After LONG action: {info['position']} (value={info['position_value']:+d}), Entry: ${info['entry_price']:,.2f}")
     
-    # Hold until SL or TP triggers, or manual close
-    print("\n  Holding position...")
-    for i in range(100):
-        obs, reward, done, _, info = env.step(2)  # HOLD
-        
-        if info['trade_closed']:
-            print(f"  Position closed after {i+1} steps!")
-            print(f"  Exit reason: {info['exit_reason']}")
-            print(f"  P&L: ${info['pnl_dollars']:,.2f}")
-            break
-    else:
-        print(f"  Position still open after 100 steps")
-        print(f"  Unrealized P&L: ${info['unrealized_pnl_dollars']:,.2f}")
+    # SHORT action -> Flip to SHORT (instant!)
+    obs, reward, _, _, info = env.step(env.ACT_SHORT)
+    print(f"After SHORT action: {info['position']} (value={info['position_value']:+d}), Flipped: {info['flipped']}, P&L: ${info['pnl_dollars']:,.2f}")
+    print(f"  New Entry: ${info['entry_price']:,.2f}")
     
-    # Run longer episode with random actions
+    # LONG action -> Flip back to LONG
+    obs, reward, _, _, info = env.step(env.ACT_LONG)
+    print(f"After LONG action: {info['position']} (value={info['position_value']:+d}), Flipped: {info['flipped']}, P&L: ${info['pnl_dollars']:,.2f}")
+    
+    # FLAT action -> Close position
+    obs, reward, _, _, info = env.step(env.ACT_FLAT)
+    print(f"After FLAT action: {info['position']} (value={info['position_value']:+d}), Closed: {info['trade_closed']}")
+    
+    # Test action matrix
+    print("\n--- Testing Action Matrix ---")
+    obs, _ = env.reset()
+    
+    print("From FLAT (0):")
+    obs, _, _, _, info = env.step(env.ACT_LONG)
+    print(f"  LONG action -> {info['position']} ({info['position_value']:+d})")
+    env.reset()
+    obs, _, _, _, info = env.step(env.ACT_SHORT)
+    print(f"  SHORT action -> {info['position']} ({info['position_value']:+d})")
+    env.reset()
+    obs, _, _, _, info = env.step(env.ACT_FLAT)
+    print(f"  FLAT action -> {info['position']} ({info['position_value']:+d})")
+    
+    # Run episode with random actions
     print("\n--- Running 2000-step Episode ---")
     obs, _ = env.reset()
     
     for step in range(2000):
-        # Random entry, let SL/TP handle exit
-        if env.position == env.FLAT:
-            action = np.random.choice([env.BUY, env.SELL])
-        else:
-            # 5% chance to manually close, otherwise hold
-            action = np.random.choice([env.BUY, env.SELL]) if np.random.random() < 0.05 else env.HOLD
-        
+        # Random action
+        action = np.random.choice([env.ACT_LONG, env.ACT_SHORT, env.ACT_FLAT])
         obs, reward, terminated, _, info = env.step(action)
         
         if terminated:
@@ -792,7 +877,15 @@ if __name__ == '__main__':
     print(f"  ROI: {stats['roi']:.2%}")
     print(f"  Max Drawdown: {stats['max_drawdown']:.2%}")
     print(f"\nExit Breakdown:")
-    print(f"  Stop-Loss triggered: {stats['sl_triggered']}")
-    print(f"  Take-Profit triggered: {stats['tp_triggered']}")
-    print(f"  Manual closes: {stats['manual_closes']}")
+    print(f"  Stop-Loss: {stats['sl_triggered']}")
+    print(f"  Take-Profit: {stats['tp_triggered']}")
+    print(f"  Flips: {stats['flips']}")
+    print(f"  Manual (FLAT): {stats['manual_closes']}")
     print(f"\n  Avg Holding Period: {stats['avg_holding_period']:.1f} steps")
+    
+    # Show action distribution
+    dist = env.get_action_distribution()
+    print(f"\nAction Distribution:")
+    print(f"  LONG: {dist['LONG']:.1%}")
+    print(f"  SHORT: {dist['SHORT']:.1%}")
+    print(f"  FLAT: {dist['FLAT']:.1%}")
