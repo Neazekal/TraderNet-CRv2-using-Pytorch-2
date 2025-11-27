@@ -17,10 +17,10 @@ SUPPORTED_CRYPTOS = {
 }
 
 # Data settings
-TIMEFRAME = '1h'
-SEQUENCE_LENGTH = 12      # N previous hours for state
-HORIZON = 20              # K hours lookahead for reward
-FEES = 0.01               # 1% transaction fee
+TIMEFRAME = '1h'              # Primary timeframe for trading decisions
+SEQUENCE_LENGTH = 12          # N previous hours for state
+HORIZON = 20                  # K hours lookahead for reward
+FEES = 0.01                   # 1% transaction fee
 
 # Feature list (20 features)
 FEATURES = [

@@ -1,16 +1,22 @@
 """
-Binance OHLCV Data Downloader using CCXT.
+Binance OHLCV and Funding Rate Data Downloader using CCXT.
 
-Downloads hourly candlestick data from Binance exchange.
+Downloads hourly candlestick data and funding rate history from Binance Futures.
 Handles pagination for large date ranges and supports resuming downloads.
+Uses API keys from .env file for authenticated endpoints.
 """
 
 import ccxt
 import pandas as pd
 import time
+import os
 from datetime import datetime
 from pathlib import Path
 from tqdm import tqdm
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class BinanceDownloader:
@@ -30,27 +36,44 @@ class BinanceDownloader:
     """
     
     OHLCV_COLUMNS = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+    FUNDING_COLUMNS = ['timestamp', 'symbol', 'funding_rate', 'funding_timestamp']
     
-    def __init__(self, symbol: str, timeframe: str = '1h'):
+    def __init__(self, symbol: str, timeframe: str = '1h', use_api_keys: bool = False):
         """
         Initialize downloader with trading pair.
         
         Args:
             symbol: Trading pair (e.g., 'BTC/USDT')
             timeframe: Candle timeframe (default: '1h')
+            use_api_keys: Whether to use API keys from .env (required for some endpoints)
         """
         self.symbol = symbol
         self.timeframe = timeframe
+        
+        # Exchange configuration
+        exchange_config = {
+            'enableRateLimit': True,
+            'rateLimit': 100,  # ms between requests (CCXT handles this)
+            'options': {'defaultType': 'future'}  # Use USDT-M Futures
+        }
+        
+        # Add API keys if requested (needed for funding rate history)
+        if use_api_keys:
+            api_key = os.getenv('BINANCE_API_KEY')
+            api_secret = os.getenv('BINANCE_API_SECRET')
+            if api_key and api_secret:
+                exchange_config['apiKey'] = api_key
+                exchange_config['secret'] = api_secret
+            else:
+                print("Warning: API keys not found in .env file. Some features may not work.")
+        
         # Binance Futures rate limit: 2400 weight/min
         # fetch_ohlcv uses ~5 weight per call
         # Safe: 2400/5 = 480 calls/min = 8 calls/sec = 125ms between calls
         # Using 100ms (rateLimit) for CCXT's built-in throttling
-        self.exchange = ccxt.binance({
-            'enableRateLimit': True,
-            'rateLimit': 100,  # ms between requests (CCXT handles this)
-            'options': {'defaultType': 'future'}  # Use USDT-M Futures
-        })
+        self.exchange = ccxt.binance(exchange_config)
         self.data: pd.DataFrame = pd.DataFrame()
+        self.funding_data: pd.DataFrame = pd.DataFrame()
         
     def _parse_date(self, date_str: str) -> int:
         """Convert date string to milliseconds timestamp."""
@@ -146,6 +169,158 @@ class BinanceDownloader:
         print(f"Downloaded {len(self.data)} candles for {self.symbol}")
         return self.data
     
+    def download_funding_rate(
+        self, 
+        start_date: str, 
+        end_date: str = None,
+        limit_per_request: int = 1000,
+        sleep_seconds: float = 0.15
+    ) -> pd.DataFrame:
+        """
+        Download funding rate history for the symbol.
+        
+        Funding rates are collected every 8 hours on Binance Futures.
+        Requires API keys to be set in .env file.
+        
+        Args:
+            start_date: Start date in 'YYYY-MM-DD' format
+            end_date: End date in 'YYYY-MM-DD' format (default: now)
+            limit_per_request: Max records per API request (default: 1000)
+            sleep_seconds: Sleep between requests to avoid rate limits
+            
+        Returns:
+            DataFrame with funding rate data
+        """
+        since = self._parse_date(start_date)
+        until = self._parse_date(end_date) if end_date else int(time.time() * 1000)
+        
+        # Funding rate interval is 8 hours (28800000 ms)
+        funding_interval_ms = 8 * 60 * 60 * 1000
+        total_records = (until - since) // funding_interval_ms
+        
+        all_funding = []
+        current = since
+        
+        # Convert symbol format for API (BTC/USDT -> BTCUSDT)
+        api_symbol = self.symbol.replace('/', '')
+        
+        with tqdm(total=total_records, desc=f"Downloading {self.symbol} funding rates") as pbar:
+            while current < until:
+                try:
+                    # Use Binance's fundingRate endpoint via CCXT
+                    params = {
+                        'symbol': api_symbol,
+                        'startTime': current,
+                        'endTime': until,
+                        'limit': limit_per_request
+                    }
+                    
+                    # Fetch funding rate history using fapiPublic endpoint
+                    response = self.exchange.fapiPublicGetFundingRate(params)
+                    
+                    if not response:
+                        break
+                    
+                    all_funding.extend(response)
+                    
+                    # Update progress
+                    pbar.update(len(response))
+                    
+                    if len(response) < limit_per_request:
+                        # No more data
+                        break
+                    
+                    # Move to next batch (use last fundingTime + 1ms)
+                    current = int(response[-1]['fundingTime']) + 1
+                    
+                    # Rate limiting
+                    time.sleep(sleep_seconds)
+                    
+                except ccxt.NetworkError as e:
+                    print(f"Network error: {e}. Retrying in 5 seconds...")
+                    time.sleep(5)
+                except ccxt.ExchangeError as e:
+                    print(f"Exchange error: {e}")
+                    break
+                except Exception as e:
+                    print(f"Error fetching funding rate: {e}")
+                    break
+        
+        if not all_funding:
+            print(f"No funding rate data found for {self.symbol}")
+            self.funding_data = pd.DataFrame(columns=['timestamp', 'funding_rate'])
+            return self.funding_data
+        
+        # Convert to DataFrame
+        self.funding_data = pd.DataFrame(all_funding)
+        
+        # Rename and format columns
+        self.funding_data = self.funding_data.rename(columns={
+            'fundingTime': 'timestamp',
+            'fundingRate': 'funding_rate'
+        })
+        
+        # Keep only relevant columns
+        self.funding_data = self.funding_data[['timestamp', 'funding_rate']]
+        
+        # Convert timestamp to datetime
+        self.funding_data['timestamp'] = pd.to_datetime(
+            self.funding_data['timestamp'].astype(int), unit='ms'
+        )
+        
+        # Convert funding_rate to float
+        self.funding_data['funding_rate'] = self.funding_data['funding_rate'].astype(float)
+        
+        # Remove duplicates and sort
+        self.funding_data = self.funding_data.drop_duplicates(subset=['timestamp'])
+        self.funding_data = self.funding_data.sort_values('timestamp').reset_index(drop=True)
+        
+        print(f"Downloaded {len(self.funding_data)} funding rate records for {self.symbol}")
+        return self.funding_data
+    
+    def save_funding(self, filepath: str) -> None:
+        """
+        Save funding rate data to CSV.
+        
+        Args:
+            filepath: Path to save CSV file
+        """
+        if self.funding_data.empty:
+            raise ValueError("No funding data to save. Call download_funding_rate() first.")
+        
+        path = Path(filepath)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        self.funding_data.to_csv(filepath, index=False)
+        print(f"Saved {len(self.funding_data)} funding rate rows to {filepath}")
+    
+    def download_all(
+        self, 
+        start_date: str, 
+        end_date: str = None,
+        include_funding: bool = True
+    ) -> tuple:
+        """
+        Download both OHLCV and funding rate data.
+        
+        Args:
+            start_date: Start date in 'YYYY-MM-DD' format
+            end_date: End date in 'YYYY-MM-DD' format (default: now)
+            include_funding: Whether to download funding rate data
+            
+        Returns:
+            Tuple of (ohlcv_df, funding_df) DataFrames
+        """
+        # Download OHLCV data
+        ohlcv_df = self.download(start_date=start_date, end_date=end_date)
+        
+        # Download funding rate data if requested
+        funding_df = pd.DataFrame()
+        if include_funding:
+            funding_df = self.download_funding_rate(start_date=start_date, end_date=end_date)
+        
+        return ohlcv_df, funding_df
+    
     def save(self, filepath: str) -> None:
         """
         Save downloaded data to CSV.
@@ -212,15 +387,17 @@ class BinanceDownloader:
 def download_all_cryptos(
     cryptos: dict,
     output_dir: str = 'data/storage/',
-    timeframe: str = '1h'
+    timeframe: str = '1h',
+    include_funding: bool = True
 ) -> None:
     """
-    Download OHLCV data for all supported cryptocurrencies.
+    Download OHLCV and funding rate data for all supported cryptocurrencies.
     
     Args:
         cryptos: Dictionary of crypto configs (from config.py)
         output_dir: Directory to save CSV files
-        timeframe: Candle timeframe
+        timeframe: Candle timeframe (default: 1h)
+        include_funding: Whether to download funding rate data
     """
     for name, config in cryptos.items():
         print(f"\n{'='*50}")
@@ -229,12 +406,23 @@ def download_all_cryptos(
         
         downloader = BinanceDownloader(
             symbol=config['symbol'],
-            timeframe=timeframe
+            timeframe=timeframe,
+            use_api_keys=include_funding  # Use API keys if downloading funding rates
         )
         
         start_date = f"{config['start_year']}-01-01"
+        
+        # Download OHLCV data
         downloader.download(start_date=start_date)
         downloader.save(f"{output_dir}/{name}.csv")
+        
+        # Download funding rate data if requested
+        if include_funding:
+            try:
+                downloader.download_funding_rate(start_date=start_date)
+                downloader.save_funding(f"{output_dir}/{name}_funding.csv")
+            except Exception as e:
+                print(f"Warning: Could not download funding rate for {name}: {e}")
 
 
 if __name__ == '__main__':
@@ -243,10 +431,11 @@ if __name__ == '__main__':
     sys.path.append(str(Path(__file__).parent.parent.parent))
     from config.config import SUPPORTED_CRYPTOS
     
-    # Download single crypto
-    # downloader = BinanceDownloader('BTC/USDT')
-    # downloader.download(start_date='2023-01-01')
+    # Download single crypto with funding rate
+    # downloader = BinanceDownloader('BTC/USDT', use_api_keys=True)
+    # downloader.download_all(start_date='2023-01-01')
     # downloader.save('data/storage/BTC.csv')
+    # downloader.save_funding('data/storage/BTC_funding.csv')
     
-    # Download all supported cryptos
-    download_all_cryptos(SUPPORTED_CRYPTOS)
+    # Download all supported cryptos (1h timeframe only)
+    download_all_cryptos(SUPPORTED_CRYPTOS, include_funding=True)
