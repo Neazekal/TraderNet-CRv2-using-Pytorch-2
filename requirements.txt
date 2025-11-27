@@ -1,0 +1,9 @@
+torch>=2.0
+gymnasium
+ccxt
+ta
+pandas
+numpy
+scikit-learn
+matplotlib
+tqdm
