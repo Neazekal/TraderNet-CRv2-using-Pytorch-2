@@ -6,9 +6,10 @@ Builds the final dataset by combining:
 - Technical indicators (12 indicators)
 - Derived features (relative prices, volume diffs)
 - Market regime detection (trending, ranging, high volatility)
+- Funding rate features (8 features from Binance Futures)
 - Feature scaling (Min-Max to [0, 1])
 
-Output: 20 features ready for model training.
+Output: 28 features ready for model training.
 """
 
 import pandas as pd
@@ -21,11 +22,12 @@ import pickle
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from config.config import FEATURES, TA_PARAMS, REGIME_PARAMS
+from config.config import FEATURES, TA_PARAMS, REGIME_PARAMS, FUNDING_PARAMS
 from data.preprocessing.ohlcv import OHLCVPreprocessor
 from analysis.technical.indicators_calc import TechnicalIndicators
 from data.preprocessing.technical import TechnicalPreprocessor
 from data.preprocessing.regime import RegimeDetector
+from data.preprocessing.funding import FundingPreprocessor
 
 
 class DatasetBuilder:
@@ -47,7 +49,7 @@ class DatasetBuilder:
         builder.save('data/datasets/BTC_processed.csv')
     """
     
-    def __init__(self, features: list = None, ta_params: dict = None, regime_params: dict = None):
+    def __init__(self, features: list = None, ta_params: dict = None, regime_params: dict = None, funding_params: dict = None):
         """
         Initialize dataset builder.
         
@@ -55,16 +57,19 @@ class DatasetBuilder:
             features: List of feature names to include (default: from config)
             ta_params: Technical indicator parameters (default: from config)
             regime_params: Market regime detection parameters (default: from config)
+            funding_params: Funding rate processing parameters (default: from config)
         """
         self.features = features or FEATURES
         self.ta_params = ta_params or TA_PARAMS
         self.regime_params = regime_params or REGIME_PARAMS
+        self.funding_params = funding_params or FUNDING_PARAMS
         
         # Initialize preprocessors
         self.ohlcv_preprocessor = OHLCVPreprocessor()
         self.ta_calculator = TechnicalIndicators(**self.ta_params)
         self.tech_preprocessor = TechnicalPreprocessor()
         self.regime_detector = RegimeDetector(**self.regime_params)
+        self.funding_preprocessor = FundingPreprocessor()
         
         # Scaler (fitted during build)
         self.scaler: Optional[MinMaxScaler] = None
@@ -76,6 +81,7 @@ class DatasetBuilder:
     def build(
         self, 
         filepath: str,
+        funding_filepath: str = None,
         fit_scaler: bool = True,
         scaler: Optional[MinMaxScaler] = None
     ) -> Tuple[pd.DataFrame, MinMaxScaler]:
@@ -84,6 +90,7 @@ class DatasetBuilder:
         
         Args:
             filepath: Path to raw OHLCV CSV file
+            funding_filepath: Path to funding rate CSV file (auto-detected if None)
             fit_scaler: Whether to fit a new scaler (True for training data)
             scaler: Pre-fitted scaler to use (for test data)
             
@@ -91,6 +98,14 @@ class DatasetBuilder:
             Tuple of (processed DataFrame, fitted scaler)
         """
         print(f"Building dataset from {filepath}...")
+        
+        # Auto-detect funding file path if not provided
+        if funding_filepath is None:
+            ohlcv_path = Path(filepath)
+            funding_filepath = ohlcv_path.parent / f"{ohlcv_path.stem}_funding.csv"
+            if not funding_filepath.exists():
+                print(f"  Warning: Funding file not found at {funding_filepath}")
+                funding_filepath = None
         
         # Step 1: Load raw data
         print("  Loading raw OHLCV data...")
@@ -101,15 +116,28 @@ class DatasetBuilder:
         print("  Computing log returns and hour...")
         df = self.ohlcv_preprocessor.preprocess(df)
         
-        # Step 3: Compute technical indicators
+        # Step 3: Load and merge funding rate data
+        if funding_filepath and Path(funding_filepath).exists():
+            print(f"  Loading and processing funding rate data from {funding_filepath}...")
+            funding_df = self.funding_preprocessor.load_and_preprocess(str(funding_filepath))
+            df = self.funding_preprocessor.merge_with_ohlcv(df, funding_df)
+            print(f"    Added {len(self.funding_preprocessor.load(str(funding_filepath)))} funding rate records")
+        else:
+            print("  Skipping funding data (file not found)")
+            # Add empty funding columns
+            from data.preprocessing.funding import get_funding_feature_columns
+            for col in get_funding_feature_columns():
+                df[col] = 0.0
+        
+        # Step 4: Compute technical indicators
         print("  Computing technical indicators...")
         df = self.ta_calculator.compute_all(df)
         
-        # Step 4: Compute derived features
+        # Step 5: Compute derived features
         print("  Computing derived features...")
         df = self.tech_preprocessor.compute_derived_features(df)
         
-        # Step 5: Detect market regime
+        # Step 6: Detect market regime
         print("  Detecting market regimes...")
         df = self.regime_detector.detect_regime(df)
         
@@ -120,12 +148,12 @@ class DatasetBuilder:
             print(f"{regime}={pct:.1f}% ", end="")
         print()
         
-        # Step 6: Keep timestamp and required columns for reward calculation
+        # Step 7: Keep timestamp and required columns for reward calculation
         # Store highs, lows, closes before selecting features
         metadata_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
         metadata = df[metadata_cols].copy()
         
-        # Step 7: Select final features
+        # Step 8: Select final features
         print(f"  Selecting {len(self.features)} features...")
         missing_features = set(self.features) - set(df.columns)
         if missing_features:
@@ -133,7 +161,7 @@ class DatasetBuilder:
         
         feature_df = df[self.features].copy()
         
-        # Step 8: Drop NaN rows (from indicator warm-up periods)
+        # Step 9: Drop NaN rows (from indicator warm-up periods)
         print("  Dropping NaN rows...")
         valid_mask = ~feature_df.isna().any(axis=1)
         feature_df = feature_df[valid_mask]
@@ -141,7 +169,7 @@ class DatasetBuilder:
         
         print(f"  Dropped {(~valid_mask).sum()} rows with NaN values")
         
-        # Step 8: Apply Min-Max scaling
+        # Step 10: Apply Min-Max scaling
         print("  Applying Min-Max scaling...")
         if fit_scaler:
             self.scaler = MinMaxScaler(feature_range=(0, 1))
