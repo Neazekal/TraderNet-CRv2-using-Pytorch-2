@@ -25,7 +25,7 @@ SUPPORTED_CRYPTOS = {
 # =============================================================================
 EXCHANGE = 'binance'
 MARKET_TYPE = 'future'          # 'spot' or 'future'
-TIMEFRAME = '1h'                # Candle timeframe
+TIMEFRAME = '1h'                # Candle timeframe (primary for trading)
 RATE_LIMIT_MS = 100             # Milliseconds between API requests
 DOWNLOAD_SLEEP = 0.1            # Additional sleep between batches (seconds)
 CANDLES_PER_REQUEST = 1000      # Max candles per API request

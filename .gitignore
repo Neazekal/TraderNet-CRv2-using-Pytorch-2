@@ -52,6 +52,6 @@ logs/
 .DS_Store
 Thumbs.db
 
-#environment files
+# Environment variables
 .env
-.env.*rc 
+.env.*rc
