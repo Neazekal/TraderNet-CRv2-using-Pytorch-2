@@ -246,7 +246,7 @@ FC Layer 1: 320 → 256
   ↓ GELU activation
 FC Layer 2: 256 → 256
   ↓ GELU activation
-Output: 256 → 3
+Output: 256 → 3 (categorical policy logits)
   ↓ Softmax
 Action Probabilities: [P(LONG), P(SHORT), P(FLAT)]
 ```
@@ -277,6 +277,8 @@ State Value: V(s)
 - `forward(state)` → state value
 - `get_value(state)` → single value estimate
 - `evaluate_states(states)` → batch values for training
+
+**Heads:** Additional heads live in `agents/networks/heads.py` for quantile Q-values, standard Q-values, and categorical policy logits, all fed by the shared Conv1D + FC backbone.
 
 **Weight Initialization:**
 - Conv/Hidden layers: Xavier and Kaiming initialization

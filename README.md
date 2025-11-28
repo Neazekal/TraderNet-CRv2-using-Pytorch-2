@@ -549,11 +549,11 @@ info = {
 
 ## Phase 4: Neural Networks
 
-Deep neural networks for the discrete RL agents (QR-DQN and Categorical SAC) using PyTorch.
+Deep neural networks for the discrete RL agents (QR-DQN and Categorical SAC) using PyTorch. A shared Conv1D + FC backbone feeds lightweight heads (policy logits, Q-values, quantile values).
 
 ### Actor Network
 
-The Actor network outputs action probabilities (policy) for the categorical action space.
+The Actor network uses the shared backbone and a categorical policy head to output action probabilities for the action space.
 
 ```python
 from agents.networks.actor import ActorNetwork
@@ -580,7 +580,7 @@ print(f"Parameters: {sum(p.numel() for p in actor.parameters()):,}")
 
 ### Critic Network
 
-The Critic network estimates state values (V(s)) and can be adapted as a Q-value backbone for QR-DQN or as a value estimator for categorical SAC.
+The Critic network uses the same backbone and a value head; the backbone can also be paired with Q/quantile heads (see `agents/networks/heads.py`) for QR-DQN or categorical SAC critics.
 
 ```python
 from agents.networks.critic import CriticNetwork
