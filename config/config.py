@@ -98,9 +98,9 @@ SLIPPAGE_MAX = 0.001            # Maximum slippage cap (0.1% = 10 bps)
 # =============================================================================
 # Feature Engineering
 # =============================================================================
-NUM_FEATURES = 28  # 19 base features + regime + 8 funding features
+NUM_FEATURES = 21  # 19 base features + regime + 1 funding feature
 
-# Feature list (19 features + regime + 8 funding)
+# Feature list (19 features + regime + 1 funding)
 FEATURES = [
     # Log returns (5)
     'open_log_returns', 'high_log_returns', 'low_log_returns',
@@ -308,4 +308,4 @@ LOG_DIR = 'logs/'
 # Derived Constants (computed from above)
 # =============================================================================
 # Observation shape for neural network input
-OBS_SHAPE = (SEQUENCE_LENGTH, NUM_FEATURES)  # (12, 28)
+OBS_SHAPE = (SEQUENCE_LENGTH, NUM_FEATURES)  # (12, 21)
