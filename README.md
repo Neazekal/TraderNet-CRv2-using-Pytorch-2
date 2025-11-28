@@ -87,7 +87,56 @@ python train.py --agent sac --crypto ETH --timesteps 500000
 | `--timesteps` | Total training steps | 1,000,000 |
 | `--eval-freq` | Evaluate every N steps | 10,000 |
 | `--device` | `cpu` or `cuda` | auto-detect |
+| `--no-multi-gpu` | Disable multi-GPU training | False |
 | `--resume` | Resume from checkpoint path | None |
+
+### GPU Configuration
+
+#### Recommended Settings by GPU
+
+| GPU | VRAM | QR-DQN Batch | SAC Batch | Multi-GPU? |
+|-----|------|--------------|-----------|------------|
+| GTX 1650 | 4GB | 256 | 512 | No |
+| T4 | 16GB | 1024 | 2048 | No |
+| P100 | 16GB | 2048 | 4096 | No |
+| V100 | 32GB | 4096 | 8192 | No |
+| A100 | 40GB | 8192 | 16384 | No |
+
+#### Why Single GPU is Faster for This Model
+
+This model is **memory-bandwidth bound**, not compute-bound:
+- Small model size (~1-2MB parameters)
+- Frequent replay buffer sampling
+- DataParallel overhead > parallelization benefit
+
+**Memory bandwidth comparison:**
+| GPU | Memory Bandwidth |
+|-----|-----------------|
+| T4 | 320 GB/s |
+| P100 | 732 GB/s |
+| V100 | 900 GB/s |
+
+**Example**: 1x P100 (732 GB/s) is faster than 2x T4 (640 GB/s combined, minus sync overhead)
+
+#### GPU Training Commands
+
+```bash
+# Single GPU (recommended for this model)
+python train.py --agent qrdqn --crypto BTC --no-multi-gpu
+
+# Multi-GPU (only if you need more VRAM, not speed)
+python train.py --agent qrdqn --crypto BTC
+```
+
+#### Changing Batch Size
+
+Edit `config/config.py`:
+```python
+QR_DQN_PARAMS = {
+    'batch_size': 2048,  # Increase for P100/V100
+    ...
+}
+```
 
 ### Checkpoints
 Training saves two files:
