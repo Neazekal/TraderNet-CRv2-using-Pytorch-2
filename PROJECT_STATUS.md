@@ -2,8 +2,8 @@
 
 **Last Updated:** 2025-11-28
 **Project:** TraderNet-CRv2 PyTorch Implementation
-**Current Phase:** Phase 5 Complete
-**Next Phase:** Phase 6 (Training & Evaluation Scripts) 
+**Current Phase:** Phase 6 Complete
+**Next Phase:** Phase 7 (Metrics & Visualization) 
 
 ---
 
@@ -11,10 +11,10 @@
 
 | Metric | Value |
 |--------|-------|
-| **Phases Complete** | 5 of 7 (71%) |
-| **Production Code** | ~6,773 lines (Phase 5: +1,944) |
-| **Test Code** | ~453 lines (Phase 5 unit tests) |
-| **Documentation** | ~1,800+ lines |
+| **Phases Complete** | 6 of 7 (86%) |
+| **Production Code** | ~9,368 lines (Phase 6: +2,513 new) |
+| **Configuration** | ~97 new lines (centralized in config.py) |
+| **Documentation** | ~2,000+ lines (added CONFIG_GUIDE.md) |
 | **Neural Networks** | 5 total (Actor, Critic, Q1, Q2, Quantile) |
 | **Total Parameters** | ~525K (Actor+Critic+Q-networks) |
 | **RL Agents** | 2 (QR-DQN: 206K params, SAC: 319K params) |
@@ -32,18 +32,20 @@ Phase 1: Data Download              (COMPLETE - 1,500 LOC)
 Phase 2: Preprocessing              (COMPLETE - 1,500 LOC)
 Phase 3: Trading Environment        (COMPLETE - 1,300 LOC)
 Phase 4: Neural Networks            (COMPLETE - 529 LOC)
-Phase 5: QR-DQN & Categorical SAC   (COMPLETE - 1,944 LOC + 453 tests)
-Phase 6: Training & Evaluation      (NEXT - ~400-600 LOC estimated)
+Phase 5: QR-DQN & Categorical SAC   (COMPLETE - 1,944 LOC)
+Phase 6: Training & Evaluation ✓    (COMPLETE - 2,513 LOC + config)
 Phase 7: Metrics & Visualization    (PLANNED - ~300-400 LOC estimated)
 ```
 
-**Phase 5 Breakdown:**
-- Replay Buffer: 390 LOC
-- QR-DQN Agent: 505 LOC
-- Categorical SAC Agent: 596 LOC
-- Module exports & refactoring: 53 LOC
-- Unit tests: 318 LOC
-- Integration tests: 135 LOC
+**Phase 6 Breakdown:**
+- train.py: 390 LOC (QR-DQN + SAC unified training)
+- evaluate.py: 310 LOC (comprehensive evaluation)
+- utils/metrics.py: 165 LOC (Sharpe, Sortino, Drawdown, etc.)
+- utils/logger.py: 155 LOC (experiment logging & progress)
+- utils/checkpoint.py: 160 LOC (model persistence)
+- metrics/trading/ modules: 265 LOC (Sharpe, Sortino, Drawdown calculators)
+- config/config.py: 97 LOC (centralized Phase 6 settings)
+- CONFIG_GUIDE.md: 200 LOC (comprehensive documentation)
 
 ---
 
@@ -90,47 +92,59 @@ Phase 7: Metrics & Visualization    (PLANNED - ~300-400 LOC estimated)
 
 ---
 
-## What's Next (Phase 6)
+## Phase 6 Complete ✓
 
-### Files to Create
-1. `train.py` - Main training script
-2. `evaluate.py` - Evaluation script
-3. `train_qrdqn.py` - QR-DQN specific training
-4. `train_categorical_sac.py` - Categorical SAC specific training
+### Implemented Components
+- ✓ `train.py` (390 LOC) - Unified training for QR-DQN and SAC
+- ✓ `evaluate.py` (310 LOC) - Comprehensive evaluation framework
+- ✓ `utils/metrics.py` (165 LOC) - Trading metrics calculator
+- ✓ `utils/logger.py` (155 LOC) - Training progress logging
+- ✓ `utils/checkpoint.py` (160 LOC) - Model checkpoint management
+- ✓ `metrics/trading/sharpe.py` (70 LOC) - Sharpe ratio
+- ✓ `metrics/trading/sortino.py` (75 LOC) - Sortino ratio
+- ✓ `metrics/trading/drawdown.py` (120 LOC) - Drawdown analysis
+- ✓ `CONFIG_GUIDE.md` (200 LOC) - Comprehensive documentation
+- ✓ Centralized configuration in `config/config.py` (97 new lines)
 
-### Key Features to Implement
-- Load preprocessed datasets
-- Create train/eval environments
-- Training loop with logging
-- Checkpoint management
-- Metrics collection (PnL, Sharpe, Sortino, Max Drawdown)
-- Evaluation on test set
+### What's Next (Phase 7)
+
+Phase 7 will implement advanced metrics and visualization:
+- Performance metrics visualization (equity curves, drawdown plots)
+- Backtesting framework with multiple strategies
+- Hyperparameter tuning utilities
+- Multi-crypto portfolio management
+- Performance comparison tools
+- Additional metrics (Information Ratio, Payoff Ratio, etc.)
 
 ---
 
-## How to Start Phase 6
+## How to Use Phase 6 Training & Evaluation
 
+### Training QR-DQN on BTC
 ```bash
-# 1. Create branch
-git checkout main
-git checkout -b phase6-training
-
-# 2. Create training scripts
-touch train.py
-touch evaluate.py
-touch train_qrdqn.py
-touch train_categorical_sac.py
-
-# 3. Implement training pipeline
-# - Load environment and agents
-# - Training loop with periodic evaluation
-# - Save best checkpoints
-
-# 4. Implement evaluation
-# - Run trained agents on test set
-# - Compute trading metrics
-# - Generate performance reports
+python train.py --agent qrdqn --crypto BTC --timesteps 1000000
 ```
+
+### Training Categorical SAC on ETH
+```bash
+python train.py --agent sac --crypto ETH --timesteps 500000 --warmup-steps 10000
+```
+
+### Evaluating Trained Agent
+```bash
+python evaluate.py --checkpoint checkpoints/best.pt --crypto BTC --num-episodes 10
+```
+
+### Customizing Configuration
+Edit `config/config.py` to modify:
+- `TRAINING_PARAMS` - Training loop hyperparameters
+- `CHECKPOINT_PARAMS` - Model saving and optimization metric
+- `LOGGING_PARAMS` - Log file locations and frequency
+- `METRICS_PARAMS` - Metric calculation settings (risk-free rate, etc.)
+- `DATA_LOADING_PARAMS` - Train/eval split and normalization
+- `EVALUATION_PARAMS` - Evaluation settings
+
+See `CONFIG_GUIDE.md` for complete parameter reference.
 
 ---
 
