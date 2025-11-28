@@ -13,6 +13,7 @@ Key Features:
 - Target network: Separate network updated every N steps for stability
 - Quantile Huber loss: Smooth loss function for quantile regression
 - Epsilon-greedy exploration: Adaptive exploration strategy
+- Multi-GPU support: Automatic DataParallel wrapping when multiple GPUs available
 """
 
 import torch
@@ -20,7 +21,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 from pathlib import Path
 
 from config.config import (
@@ -36,6 +37,10 @@ from config.config import (
 from agents.networks.actor import ActorNetwork
 from agents.networks.critic import CriticNetwork
 from agents.buffers.replay_buffer import ReplayBuffer
+from utils.distributed import (
+    get_device, wrap_model_multi_gpu, unwrap_model,
+    get_available_gpus, print_gpu_info
+)
 
 
 class QRDQNAgent:
@@ -62,7 +67,9 @@ class QRDQNAgent:
         replay_buffer_size: int = 500_000,
         batch_size: int = 128,
         target_update_interval: int = 2000,
-        device: torch.device = torch.device('cpu'),
+        device: torch.device = None,
+        gpu_ids: Optional[List[int]] = None,
+        use_multi_gpu: bool = True,
     ):
         """
         Initialize QR-DQN agent.
@@ -76,8 +83,24 @@ class QRDQNAgent:
             replay_buffer_size: Maximum replay buffer capacity
             batch_size: Training batch size
             target_update_interval: Steps between target network updates
-            device: torch device for computation
+            device: torch device for computation (auto-detected if None)
+            gpu_ids: List of GPU IDs for multi-GPU training (auto-detected if None)
+            use_multi_gpu: Whether to use multiple GPUs if available
         """
+        # Auto-detect device and GPUs if not specified
+        if device is None:
+            self.device, detected_gpus = get_device(prefer_multi_gpu=use_multi_gpu)
+        else:
+            self.device = device
+            detected_gpus = get_available_gpus() if use_multi_gpu else []
+        
+        # Set GPU IDs for multi-GPU training
+        self.gpu_ids = gpu_ids if gpu_ids is not None else detected_gpus
+        self.use_multi_gpu = use_multi_gpu and len(self.gpu_ids) > 1
+        
+        if self.use_multi_gpu:
+            print(f"QR-DQN: Multi-GPU training enabled on GPUs {self.gpu_ids}")
+        
         self.num_actions = num_actions
         self.num_quantiles = num_quantiles
         self.learning_rate = learning_rate
@@ -85,7 +108,6 @@ class QRDQNAgent:
         self.huber_kappa = huber_kappa
         self.batch_size = batch_size
         self.target_update_interval = target_update_interval
-        self.device = device
 
         # Training state
         self.total_steps = 0
@@ -94,9 +116,9 @@ class QRDQNAgent:
         # Networks
         self._init_networks()
 
-        # Optimizer
+        # Optimizer - use unwrapped model parameters for DataParallel
         self.optimizer = optim.Adam(
-            self.q_network.parameters(),
+            self._get_q_network().parameters(),
             lr=learning_rate,
         )
 
@@ -106,16 +128,24 @@ class QRDQNAgent:
             alpha=0.6,
             beta_start=0.4,
             beta_frames=500_000,
-            device=device,
+            device=self.device,
         )
 
         # Quantile embedding for IQN-style operation
         self.tau_quantiles = torch.linspace(
-            0, 1, num_quantiles + 2, device=device
+            0, 1, num_quantiles + 2, device=self.device
         )[1:-1]  # Remove edges
 
+    def _get_q_network(self) -> nn.Module:
+        """Get the underlying Q-network (unwrapped if DataParallel)."""
+        return unwrap_model(self.q_network)
+    
+    def _get_target_q_network(self) -> nn.Module:
+        """Get the underlying target Q-network (unwrapped if DataParallel)."""
+        return unwrap_model(self.target_q_network)
+
     def _init_networks(self):
-        """Initialize Q-network and target Q-network."""
+        """Initialize Q-network and target Q-network with optional multi-GPU support."""
         # Q-network with quantile output head
         self.q_network = QuantileQNetwork(
             num_actions=self.num_actions,
@@ -130,11 +160,16 @@ class QRDQNAgent:
             device=self.device,
         ).to(self.device)
 
+        # Wrap with DataParallel if multi-GPU is enabled
+        if self.use_multi_gpu:
+            self.q_network = wrap_model_multi_gpu(self.q_network, self.gpu_ids)
+            self.target_q_network = wrap_model_multi_gpu(self.target_q_network, self.gpu_ids)
+
         # Initialize target network with same weights
         self._update_target_network(tau=1.0)  # Hard copy
 
         # Freeze target network
-        for param in self.target_q_network.parameters():
+        for param in self._get_target_q_network().parameters():
             param.requires_grad = False
 
     def select_action(self, state: np.ndarray, epsilon: float = 0.0) -> int:
@@ -306,9 +341,13 @@ class QRDQNAgent:
         Args:
             tau: Soft update coefficient (0=no update, 1=hard copy)
         """
+        # Use unwrapped models for parameter iteration (handles DataParallel)
+        q_net = self._get_q_network()
+        target_q_net = self._get_target_q_network()
+        
         for param, target_param in zip(
-            self.q_network.parameters(),
-            self.target_q_network.parameters(),
+            q_net.parameters(),
+            target_q_net.parameters(),
         ):
             target_param.data.copy_(
                 tau * param.data + (1 - tau) * target_param.data
@@ -321,12 +360,15 @@ class QRDQNAgent:
         Args:
             filepath: Path to save checkpoint
         """
+        # Save unwrapped model state dicts (handles DataParallel)
         checkpoint = {
-            'q_network': self.q_network.state_dict(),
-            'target_q_network': self.target_q_network.state_dict(),
+            'q_network': self._get_q_network().state_dict(),
+            'target_q_network': self._get_target_q_network().state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'total_steps': self.total_steps,
             'update_count': self.update_count,
+            'use_multi_gpu': self.use_multi_gpu,
+            'gpu_ids': self.gpu_ids,
         }
         torch.save(checkpoint, filepath)
 
@@ -339,8 +381,9 @@ class QRDQNAgent:
         """
         checkpoint = torch.load(filepath, map_location=self.device)
 
-        self.q_network.load_state_dict(checkpoint['q_network'])
-        self.target_q_network.load_state_dict(checkpoint['target_q_network'])
+        # Load into unwrapped models (handles DataParallel)
+        self._get_q_network().load_state_dict(checkpoint['q_network'])
+        self._get_target_q_network().load_state_dict(checkpoint['target_q_network'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         self.total_steps = checkpoint['total_steps']
         self.update_count = checkpoint['update_count']

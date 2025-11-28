@@ -14,6 +14,7 @@ Key Features:
 - Entropy temperature auto-tuning: Dynamic alpha adjustment
 - Prioritized Experience Replay: Rare important transitions
 - Soft target updates: Gradual network target updates (tau=0.005)
+- Multi-GPU support: Automatic DataParallel wrapping when multiple GPUs available
 """
 
 import torch
@@ -21,7 +22,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 from pathlib import Path
 
 from config.config import (
@@ -36,6 +37,10 @@ from config.config import (
 from agents.networks.actor import ActorNetwork
 from agents.networks.critic import CriticNetwork
 from agents.buffers.replay_buffer import ReplayBuffer
+from utils.distributed import (
+    get_device, wrap_model_multi_gpu, unwrap_model,
+    get_available_gpus, print_gpu_info
+)
 
 
 class CategoricalSACAgent:
@@ -63,7 +68,9 @@ class CategoricalSACAgent:
         batch_size: int = 256,
         replay_buffer_size: int = 500_000,
         target_update_interval: int = 1,
-        device: torch.device = torch.device('cpu'),
+        device: torch.device = None,
+        gpu_ids: Optional[List[int]] = None,
+        use_multi_gpu: bool = True,
     ):
         """
         Initialize Categorical SAC agent.
@@ -78,15 +85,30 @@ class CategoricalSACAgent:
             batch_size: Training batch size
             replay_buffer_size: Maximum replay buffer capacity
             target_update_interval: Steps between target network updates
-            device: torch device for computation
+            device: torch device for computation (auto-detected if None)
+            gpu_ids: List of GPU IDs for multi-GPU training (auto-detected if None)
+            use_multi_gpu: Whether to use multiple GPUs if available
         """
+        # Auto-detect device and GPUs if not specified
+        if device is None:
+            self.device, detected_gpus = get_device(prefer_multi_gpu=use_multi_gpu)
+        else:
+            self.device = device
+            detected_gpus = get_available_gpus() if use_multi_gpu else []
+        
+        # Set GPU IDs for multi-GPU training
+        self.gpu_ids = gpu_ids if gpu_ids is not None else detected_gpus
+        self.use_multi_gpu = use_multi_gpu and len(self.gpu_ids) > 1
+        
+        if self.use_multi_gpu:
+            print(f"Categorical SAC: Multi-GPU training enabled on GPUs {self.gpu_ids}")
+        
         self.num_actions = num_actions
         self.learning_rate = learning_rate
         self.gamma = gamma
         self.tau = tau
         self.batch_size = batch_size
         self.target_update_interval = target_update_interval
-        self.device = device
 
         # Training state
         self.total_steps = 0
@@ -94,24 +116,24 @@ class CategoricalSACAgent:
 
         # Entropy target and temperature
         self.target_entropy = entropy_target
-        self.log_alpha = torch.tensor(np.log(alpha_init), device=device, requires_grad=True)
+        self.log_alpha = torch.tensor(np.log(alpha_init), device=self.device, requires_grad=True)
 
         # Networks
         self._init_networks()
 
-        # Optimizers
+        # Optimizers - use unwrapped model parameters for DataParallel
         self.actor_optimizer = optim.Adam(
-            self.actor.parameters(),
+            self._get_actor().parameters(),
             lr=learning_rate,
         )
 
         self.q1_optimizer = optim.Adam(
-            self.q1_network.parameters(),
+            self._get_q1_network().parameters(),
             lr=learning_rate,
         )
 
         self.q2_optimizer = optim.Adam(
-            self.q2_network.parameters(),
+            self._get_q2_network().parameters(),
             lr=learning_rate,
         )
 
@@ -126,11 +148,31 @@ class CategoricalSACAgent:
             alpha=0.6,
             beta_start=0.4,
             beta_frames=500_000,
-            device=device,
+            device=self.device,
         )
 
+    def _get_actor(self) -> nn.Module:
+        """Get the underlying actor network (unwrapped if DataParallel)."""
+        return unwrap_model(self.actor)
+    
+    def _get_q1_network(self) -> nn.Module:
+        """Get the underlying Q1 network (unwrapped if DataParallel)."""
+        return unwrap_model(self.q1_network)
+    
+    def _get_q2_network(self) -> nn.Module:
+        """Get the underlying Q2 network (unwrapped if DataParallel)."""
+        return unwrap_model(self.q2_network)
+    
+    def _get_target_q1_network(self) -> nn.Module:
+        """Get the underlying target Q1 network (unwrapped if DataParallel)."""
+        return unwrap_model(self.target_q1_network)
+    
+    def _get_target_q2_network(self) -> nn.Module:
+        """Get the underlying target Q2 network (unwrapped if DataParallel)."""
+        return unwrap_model(self.target_q2_network)
+
     def _init_networks(self):
-        """Initialize actor and critic networks."""
+        """Initialize actor and critic networks with optional multi-GPU support."""
         # Actor: Outputs categorical policy logits
         self.actor = ActorNetwork().to(self.device)
 
@@ -142,13 +184,21 @@ class CategoricalSACAgent:
         self.target_q1_network = SACQNetwork().to(self.device)
         self.target_q2_network = SACQNetwork().to(self.device)
 
+        # Wrap with DataParallel if multi-GPU is enabled
+        if self.use_multi_gpu:
+            self.actor = wrap_model_multi_gpu(self.actor, self.gpu_ids)
+            self.q1_network = wrap_model_multi_gpu(self.q1_network, self.gpu_ids)
+            self.q2_network = wrap_model_multi_gpu(self.q2_network, self.gpu_ids)
+            self.target_q1_network = wrap_model_multi_gpu(self.target_q1_network, self.gpu_ids)
+            self.target_q2_network = wrap_model_multi_gpu(self.target_q2_network, self.gpu_ids)
+
         # Initialize target networks
         self._hard_update_target_networks()
 
         # Freeze target networks
-        for param in self.target_q1_network.parameters():
+        for param in self._get_target_q1_network().parameters():
             param.requires_grad = False
-        for param in self.target_q2_network.parameters():
+        for param in self._get_target_q2_network().parameters():
             param.requires_grad = False
 
     def select_action(
@@ -356,7 +406,7 @@ class CategoricalSACAgent:
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         grad_clip_norm = AGENT_TRAINING_PARAMS['gradient_clip_norm']
-        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=grad_clip_norm)
+        torch.nn.utils.clip_grad_norm_(self._get_actor().parameters(), max_norm=grad_clip_norm)
         self.actor_optimizer.step()
 
         return actor_loss, entropy
@@ -383,10 +433,11 @@ class CategoricalSACAgent:
 
     def _soft_update_target_networks(self):
         """Soft update target networks using tau."""
+        # Use unwrapped models for parameter iteration (handles DataParallel)
         # Q1 target
         for param, target_param in zip(
-            self.q1_network.parameters(),
-            self.target_q1_network.parameters(),
+            self._get_q1_network().parameters(),
+            self._get_target_q1_network().parameters(),
         ):
             target_param.data.copy_(
                 self.tau * param.data + (1 - self.tau) * target_param.data
@@ -394,8 +445,8 @@ class CategoricalSACAgent:
 
         # Q2 target
         for param, target_param in zip(
-            self.q2_network.parameters(),
-            self.target_q2_network.parameters(),
+            self._get_q2_network().parameters(),
+            self._get_target_q2_network().parameters(),
         ):
             target_param.data.copy_(
                 self.tau * param.data + (1 - self.tau) * target_param.data
@@ -403,15 +454,16 @@ class CategoricalSACAgent:
 
     def _hard_update_target_networks(self):
         """Hard copy target networks."""
+        # Use unwrapped models for parameter iteration (handles DataParallel)
         for param, target_param in zip(
-            self.q1_network.parameters(),
-            self.target_q1_network.parameters(),
+            self._get_q1_network().parameters(),
+            self._get_target_q1_network().parameters(),
         ):
             target_param.data.copy_(param.data)
 
         for param, target_param in zip(
-            self.q2_network.parameters(),
-            self.target_q2_network.parameters(),
+            self._get_q2_network().parameters(),
+            self._get_target_q2_network().parameters(),
         ):
             target_param.data.copy_(param.data)
 
@@ -422,12 +474,13 @@ class CategoricalSACAgent:
         Args:
             filepath: Path to save checkpoint
         """
+        # Save unwrapped model state dicts (handles DataParallel)
         checkpoint = {
-            'actor': self.actor.state_dict(),
-            'q1_network': self.q1_network.state_dict(),
-            'q2_network': self.q2_network.state_dict(),
-            'target_q1_network': self.target_q1_network.state_dict(),
-            'target_q2_network': self.target_q2_network.state_dict(),
+            'actor': self._get_actor().state_dict(),
+            'q1_network': self._get_q1_network().state_dict(),
+            'q2_network': self._get_q2_network().state_dict(),
+            'target_q1_network': self._get_target_q1_network().state_dict(),
+            'target_q2_network': self._get_target_q2_network().state_dict(),
             'actor_optimizer': self.actor_optimizer.state_dict(),
             'q1_optimizer': self.q1_optimizer.state_dict(),
             'q2_optimizer': self.q2_optimizer.state_dict(),
@@ -435,6 +488,8 @@ class CategoricalSACAgent:
             'log_alpha': self.log_alpha.data,
             'total_steps': self.total_steps,
             'update_count': self.update_count,
+            'use_multi_gpu': self.use_multi_gpu,
+            'gpu_ids': self.gpu_ids,
         }
         torch.save(checkpoint, filepath)
 
@@ -447,11 +502,12 @@ class CategoricalSACAgent:
         """
         checkpoint = torch.load(filepath, map_location=self.device)
 
-        self.actor.load_state_dict(checkpoint['actor'])
-        self.q1_network.load_state_dict(checkpoint['q1_network'])
-        self.q2_network.load_state_dict(checkpoint['q2_network'])
-        self.target_q1_network.load_state_dict(checkpoint['target_q1_network'])
-        self.target_q2_network.load_state_dict(checkpoint['target_q2_network'])
+        # Load into unwrapped models (handles DataParallel)
+        self._get_actor().load_state_dict(checkpoint['actor'])
+        self._get_q1_network().load_state_dict(checkpoint['q1_network'])
+        self._get_q2_network().load_state_dict(checkpoint['q2_network'])
+        self._get_target_q1_network().load_state_dict(checkpoint['target_q1_network'])
+        self._get_target_q2_network().load_state_dict(checkpoint['target_q2_network'])
         self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
         self.q1_optimizer.load_state_dict(checkpoint['q1_optimizer'])
         self.q2_optimizer.load_state_dict(checkpoint['q2_optimizer'])

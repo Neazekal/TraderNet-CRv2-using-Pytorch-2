@@ -3,10 +3,12 @@
 Main training script for QR-DQN and Categorical SAC agents.
 
 Unified interface for training both agents on cryptocurrency futures data.
+Supports multi-GPU training when multiple GPUs are available.
 
 Usage:
     python train.py --agent qrdqn --crypto BTC --timesteps 1000000
     python train.py --agent sac --crypto ETH --timesteps 500000
+    python train.py --agent qrdqn --crypto BTC --timesteps 1000000 --no-multi-gpu
 """
 
 import argparse
@@ -30,6 +32,7 @@ from agents.categorical_sac_agent import CategoricalSACAgent
 from utils.logger import TrainingLogger
 from utils.checkpoint import CheckpointManager
 from utils.metrics import TradingMetrics
+from utils.distributed import print_gpu_info, get_device
 
 
 def load_dataset(crypto: str) -> dict:
@@ -105,6 +108,7 @@ def create_environments(data: dict) -> tuple[PositionTradingEnv, PositionTrading
 def create_agent(
     agent_type: str,
     device: torch.device,
+    use_multi_gpu: bool = True,
 ) -> torch.nn.Module:
     """
     Create RL agent.
@@ -112,6 +116,7 @@ def create_agent(
     Args:
         agent_type: 'qrdqn' or 'sac'
         device: torch device
+        use_multi_gpu: Whether to enable multi-GPU training
 
     Returns:
         Agent instance
@@ -124,6 +129,7 @@ def create_agent(
             gamma=QR_DQN_PARAMS['gamma'],
             num_quantiles=QR_DQN_PARAMS['num_quantiles'],
             device=device,
+            use_multi_gpu=use_multi_gpu,
         )
     elif agent_type.lower() == "sac":
         print("Creating Categorical SAC agent...")
@@ -133,6 +139,7 @@ def create_agent(
             gamma=CATEGORICAL_SAC_PARAMS['gamma'],
             tau=CATEGORICAL_SAC_PARAMS['tau'],
             device=device,
+            use_multi_gpu=use_multi_gpu,
         )
     else:
         raise ValueError(f"Unknown agent type: {agent_type}")
@@ -574,6 +581,11 @@ def main():
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Device for training",
     )
+    parser.add_argument(
+        "--no-multi-gpu",
+        action="store_true",
+        help="Disable multi-GPU training even if multiple GPUs are available",
+    )
 
     args = parser.parse_args()
     
@@ -584,9 +596,17 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    # Device
+    # Device and multi-GPU setup
     device = torch.device(args.device)
-    print(f"Using device: {device}")
+    use_multi_gpu = not args.no_multi_gpu
+    
+    # Print GPU information
+    print_gpu_info()
+    print(f"\nUsing device: {device}")
+    if use_multi_gpu:
+        print(f"Multi-GPU training: ENABLED")
+    else:
+        print(f"Multi-GPU training: DISABLED")
 
     # Load dataset
     print(f"\nLoading {args.crypto} dataset...")
@@ -598,7 +618,7 @@ def main():
 
     # Create agent
     print(f"\nCreating {args.agent.upper()} agent...")
-    agent = create_agent(args.agent.lower(), device)
+    agent = create_agent(args.agent.lower(), device, use_multi_gpu)
 
     # Training
     print(f"\n{'='*60}")
