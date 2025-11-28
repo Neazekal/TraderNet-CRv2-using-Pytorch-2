@@ -6,7 +6,7 @@
 
 ---
 
-## 🎯 Project Overview
+## Project Overview
 
 A PyTorch implementation of TraderNet-CRv2 that combines Proximal Policy Optimization (PPO) with technical analysis for cryptocurrency futures trading. The system uses deep reinforcement learning to learn profitable trading strategies while managing risk through stop-loss, take-profit, and position sizing.
 
@@ -16,26 +16,26 @@ A PyTorch implementation of TraderNet-CRv2 that combines Proximal Policy Optimiz
 
 ---
 
-## ✅ Current Status
+## Current Status
 
 ### Completed Phases (4 of 7)
 
 | Phase | Status | Lines of Code | Description |
 |-------|--------|---------------|-------------|
-| **Phase 1** | ✅ COMPLETE | ~1,500 | Data download (Binance Futures OHLCV + Funding Rate) |
-| **Phase 2** | ✅ COMPLETE | ~1,500 | Preprocessing (21 features: technical indicators + regime detection) |
-| **Phase 3** | ✅ COMPLETE | ~1,300 | Trading environment (Position-based with realistic costs) |
-| **Phase 4** | ✅ COMPLETE | ~529 | Neural Networks (Actor-Critic for PPO) |
-| **Phase 5** | ⏳ NEXT | TBD | PPO Agent (training algorithm) |
-| **Phase 6** | 📋 PLANNED | TBD | Training & Evaluation scripts |
-| **Phase 7** | 📋 PLANNED | TBD | Metrics & Visualization |
+| **Phase 1** | COMPLETE | ~1,500 | Data download (Binance Futures OHLCV + Funding Rate) |
+| **Phase 2** | COMPLETE | ~1,500 | Preprocessing (21 features: technical indicators + regime detection) |
+| **Phase 3** | COMPLETE | ~1,300 | Trading environment (Position-based with realistic costs) |
+| **Phase 4** | COMPLETE | ~529 | Neural Networks (Actor-Critic for PPO) |
+| **Phase 5** | NEXT | TBD | PPO Agent (training algorithm) |
+| **Phase 6** | PLANNED | TBD | Training & Evaluation scripts |
+| **Phase 7** | PLANNED | TBD | Metrics & Visualization |
 
 **Total Implementation:** ~4,829 lines of production code
 **Documentation:** ~1,400+ lines
 
 ---
 
-## 🚀 Next Phase: Phase 5 - PPO Agent
+## Next Phase: Phase 5 - PPO Agent
 
 ### What Needs to Be Built
 
@@ -107,66 +107,66 @@ TRAINING_PARAMS = {
 ```
 TraderNet-CRv2-using-Pytorch-2/
 ├── config/
-│   └── config.py                    # ✅ All hyperparameters centralized
+│   └── config.py                    # All hyperparameters centralized
 │
 ├── data/
 │   ├── downloaders/
-│   │   └── binance.py               # ✅ CCXT Binance Futures downloader
+│   │   └── binance.py               # CCXT Binance Futures downloader
 │   ├── preprocessing/
-│   │   ├── ohlcv.py                 # ✅ Log returns & hour extraction
-│   │   ├── technical.py             # ✅ Derived technical features
-│   │   ├── regime.py                # ✅ Market regime detection (4 states)
-│   │   └── funding.py               # ✅ Funding rate processing
+│   │   ├── ohlcv.py                 # Log returns & hour extraction
+│   │   ├── technical.py             # Derived technical features
+│   │   ├── regime.py                # Market regime detection (4 states)
+│   │   └── funding.py               # Funding rate processing
 │   └── datasets/
-│       ├── builder.py               # ✅ Complete preprocessing pipeline
-│       └── utils.py                 # ✅ Train/eval split utilities
+│       ├── builder.py               # Complete preprocessing pipeline
+│       └── utils.py                 # Train/eval split utilities
 │
 ├── analysis/
 │   └── technical/
-│       └── indicators_calc.py       # ✅ 11 technical indicators
+│       └── indicators_calc.py       # 11 technical indicators
 │
 ├── environments/
-│   ├── trading_env.py               # ✅ Paper replication environment
-│   ├── position_trading_env.py      # ✅ MAIN ENV: Realistic trading
+│   ├── trading_env.py               # Paper replication environment
+│   ├── position_trading_env.py      # MAIN ENV: Realistic trading
 │   └── rewards/
-│       ├── base.py                  # ✅ Base reward class
-│       ├── market_limit.py          # ✅ MarketLimitOrder reward
-│       └── smurf.py                 # ✅ Smurf conservative reward
+│       ├── base.py                  # Base reward class
+│       ├── market_limit.py          # MarketLimitOrder reward
+│       └── smurf.py                 # Smurf conservative reward
 │
 ├── agents/
-│   ├── __init__.py                  # ✅ Module exports
+│   ├── __init__.py                  # Module exports
 │   ├── networks/
-│   │   ├── __init__.py              # ✅ Network exports
-│   │   ├── actor.py                 # ✅ ActorNetwork (151,459 params)
-│   │   └── critic.py                # ✅ CriticNetwork (150,945 params)
-│   ├── buffers/                     # ⏳ NEXT: Rollout buffer
-│   │   └── rollout_buffer.py        # ⏳ TODO: Experience storage + GAE
-│   └── ppo_agent.py                 # ⏳ NEXT: PPO training algorithm
+│   │   ├── __init__.py              # Network exports
+│   │   ├── actor.py                 # ActorNetwork (151,459 params)
+│   │   └── critic.py                # CriticNetwork (150,945 params)
+│   ├── buffers/                     # NEXT: Rollout buffer
+│   │   └── rollout_buffer.py        # TODO: Experience storage + GAE
+│   └── ppo_agent.py                 # NEXT: PPO training algorithm
 │
-├── metrics/                         # 📋 PLANNED: Trading metrics
+├── metrics/                         # PLANNED: Trading metrics
 │   └── trading/
-│       ├── base.py                  # 📋 TODO: Base metric class
-│       ├── pnl.py                   # 📋 TODO: Cumulative returns
-│       ├── sharpe.py                # 📋 TODO: Sharpe ratio
-│       ├── sortino.py               # 📋 TODO: Sortino ratio
-│       └── drawdown.py              # 📋 TODO: Maximum drawdown
+│       ├── base.py                  # TODO: Base metric class
+│       ├── pnl.py                   # TODO: Cumulative returns
+│       ├── sharpe.py                # TODO: Sharpe ratio
+│       ├── sortino.py               # TODO: Sortino ratio
+│       └── drawdown.py              # TODO: Maximum drawdown
 │
 ├── checkpoints/                     # Model checkpoints (gitignored)
 ├── logs/                            # Training logs (gitignored)
 ├── data/storage/                    # Raw CSV data (gitignored)
 ├── data/datasets/                   # Processed datasets (gitignored)
 │
-├── README.md                        # ✅ Complete user guide (810 lines)
-├── CONTINUATION.md                  # ✅ This file - continuation guide
-├── IMPLEMENTATION_PLAN.md           # ✅ Detailed 7-phase plan (510 lines)
-├── papers.md                        # ✅ Paper summary and references
-├── missing_parameters.md            # ✅ Parameters from original repo
-└── requirements.txt                 # ✅ Python dependencies
+├── README.md                        # Complete user guide (810 lines)
+├── CONTINUATION.md                  # This file - continuation guide
+├── IMPLEMENTATION_PLAN.md           # Detailed 7-phase plan (510 lines)
+├── papers.md                        # Paper summary and references
+├── missing_parameters.md            # Parameters from original repo
+└── requirements.txt                 # Python dependencies
 ```
 
 ---
 
-## 🔑 Key Design Decisions
+## Key Design Decisions
 
 ### 1. Action Space (Position-Based)
 - **Actions:** 3 discrete - LONG(0), SHORT(1), FLAT(2)
@@ -215,7 +215,7 @@ TraderNet-CRv2-using-Pytorch-2/
 
 ---
 
-## 🧠 Neural Network Architecture (Phase 4 - Complete)
+## Neural Network Architecture (Phase 4 - Complete)
 
 ### ActorNetwork (151,459 parameters)
 ```
@@ -267,18 +267,18 @@ State Value: V(s)
 
 ---
 
-## 📊 Dataset & Features
+## Dataset & Features
 
 ### Supported Cryptocurrencies (7)
 | Symbol | Pair | Data Start | Status |
 |--------|------|------------|--------|
-| BTC | BTC/USDT | 2019 | ✅ Available |
-| ETH | ETH/USDT | 2019 | ✅ Available |
-| XRP | XRP/USDT | 2020 | ✅ Available |
-| SOL | SOL/USDT | 2021 | ✅ Available |
-| BNB | BNB/USDT | 2020 | ✅ Available |
-| TRX | TRX/USDT | 2020 | ✅ Available |
-| DOGE | DOGE/USDT | 2021 | ✅ Available |
+| BTC | BTC/USDT | 2019 | Available |
+| ETH | ETH/USDT | 2019 | Available |
+| XRP | XRP/USDT | 2020 | Available |
+| SOL | SOL/USDT | 2021 | Available |
+| BNB | BNB/USDT | 2020 | Available |
+| TRX | TRX/USDT | 2020 | Available |
+| DOGE | DOGE/USDT | 2021 | Available |
 
 ### Features (28 total)
 
@@ -326,7 +326,7 @@ Sequences (12 timesteps, 28 features) + Train/Eval Split
 
 ---
 
-## 🎮 Trading Environment Features
+## Trading Environment Features
 
 ### PositionTradingEnv (Main Environment)
 
@@ -359,7 +359,7 @@ Sequences (12 timesteps, 28 features) + Train/Eval Split
 
 ---
 
-## 🧪 Testing Commands
+## Testing Commands
 
 ### Test Each Component
 
@@ -422,7 +422,7 @@ PYTHONPATH=/home/ngkhoa/TraderNet-CRv2-using-Pytorch-2:$PYTHONPATH python agents
 
 ---
 
-## 🌿 Git Workflow
+## Git Workflow
 
 ### Branches
 
@@ -467,7 +467,7 @@ git push origin main
 
 ---
 
-## 📚 Important References
+## Important References
 
 ### Implementation References
 1. **Original Paper:** Kochliaridis et al. (2023) - "Combining deep reinforcement learning with technical analysis and trend monitoring on cryptocurrency markets"
@@ -482,7 +482,7 @@ git push origin main
 
 ---
 
-## 💡 Tips for Next Developer/Bot
+## Tips for Next Developer/Bot
 
 ### Understanding the Codebase
 1. **Start with:** `README.md` for high-level overview
@@ -491,11 +491,11 @@ git push origin main
 4. **Review:** `IMPLEMENTATION_PLAN.md` for detailed Phase 5 specs
 
 ### Before Starting Phase 5
-1. ✅ Verify all Phase 1-4 components work (use testing commands above)
-2. ✅ Ensure data is downloaded (`data/storage/*.csv`)
-3. ✅ Ensure datasets are processed (`data/datasets/*_processed.csv`)
-4. ✅ Test both networks (Actor and Critic)
-5. ✅ Create `phase5-ppo-agent` branch from `main`
+1. Verify all Phase 1-4 components work (use testing commands above)
+2. Ensure data is downloaded (`data/storage/*.csv`)
+3. Ensure datasets are processed (`data/datasets/*_processed.csv`)
+4. Test both networks (Actor and Critic)
+5. Create `phase5-ppo-agent` branch from `main`
 
 ### During Phase 5 Implementation
 1. **Read Phase 5 section** in `IMPLEMENTATION_PLAN.md` lines 357-389
@@ -522,11 +522,11 @@ git push origin main
    ```
 
 ### Common Pitfalls to Avoid
-- ❌ Don't hardcode hyperparameters (use `config/config.py`)
-- ❌ Don't forget to transpose for Conv1D: `(batch, seq, features)` → `(batch, features, seq)`
-- ❌ Don't create files without testing them first
-- ❌ Don't commit without clear, descriptive commit messages
-- ❌ Don't merge to main without testing thoroughly
+- Don't hardcode hyperparameters (use `config/config.py`)
+- Don't forget to transpose for Conv1D: `(batch, seq, features)` → `(batch, features, seq)`
+- Don't create files without testing them first
+- Don't commit without clear, descriptive commit messages
+- Don't merge to main without testing thoroughly
 
 ### What Makes This Implementation Special
 1. **Realistic Trading Simulation:**
@@ -549,18 +549,18 @@ git push origin main
 
 ---
 
-## 📝 Summary for Next Session
+## Summary for Next Session
 
 **What's Done:**
-- ✅ Data pipeline (Binance Futures OHLCV + Funding)
-- ✅ Preprocessing (21 active features + regime detection)
-- ✅ Trading environment (Realistic position-based)
-- ✅ Neural networks (Actor-Critic, 302K total params)
+- Data pipeline (Binance Futures OHLCV + Funding)
+- Preprocessing (21 active features + regime detection)
+- Trading environment (Realistic position-based)
+- Neural networks (Actor-Critic, 302K total params)
 
 **What's Next:**
-- ⏳ Rollout Buffer (store experiences, compute GAE)
-- ⏳ PPO Agent (training algorithm)
-- ⏳ Training script (train on all cryptos)
+- Rollout Buffer (store experiences, compute GAE)
+- PPO Agent (training algorithm)
+- Training script (train on all cryptos)
 
 **Ready to Start:**
 ```bash
