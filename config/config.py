@@ -248,6 +248,22 @@ TRAINING_PARAMS = {
     'save_freq': 50_000,            # Save checkpoint every N steps
     'log_freq': 1000,               # Log metrics every N steps
     'seed': 42,                     # Random seed for reproducibility
+    'warmup_steps': 10_000,         # SAC warmup with random actions
+    'eval_episodes': 5,             # Episodes per evaluation
+}
+
+# Checkpoint settings (Phase 6)
+CHECKPOINT_PARAMS = {
+    'keep_n_best': 3,               # Keep top N checkpoints
+    'metric_name': 'mean_return',   # Metric to optimize
+    'mode': 'max',                  # 'max' or 'min'
+}
+
+# Logging settings (Phase 6)
+LOGGING_PARAMS = {
+    'log_dir': 'logs/',
+    'use_tensorboard': False,       # Enable Tensorboard logging
+    'console_log_freq': 100,        # Console output frequency
 }
 
 # =============================================================================
