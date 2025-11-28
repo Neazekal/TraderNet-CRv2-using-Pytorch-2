@@ -1,7 +1,7 @@
 # Project Continuation Guide
 
 **Last Updated:** 2025-11-28
-**Current Phase:** Phase 4 Complete, Ready for Phase 5
+**Current Phase:** Phase 5 Complete, Ready for Phase 6
 **Project:** TraderNet-CRv2 PyTorch - Deep RL Cryptocurrency Trading System
 
 ---
@@ -18,7 +18,7 @@ A PyTorch implementation of TraderNet-CRv2 that combines QR-DQN (distributional 
 
 ## Current Status
 
-### Completed Phases (4 of 7)
+### Completed Phases (5 of 7)
 
 | Phase | Status | Lines of Code | Description |
 |-------|--------|---------------|-------------|
@@ -26,57 +26,108 @@ A PyTorch implementation of TraderNet-CRv2 that combines QR-DQN (distributional 
 | **Phase 2** | COMPLETE | ~1,500 | Preprocessing (21 features: technical indicators + regime detection) |
 | **Phase 3** | COMPLETE | ~1,300 | Trading environment (Position-based with realistic costs) |
 | **Phase 4** | COMPLETE | ~529 | Neural Networks (Actor-Critic backbones) |
-| **Phase 5** | NEXT | TBD | RL Agents (QR-DQN + Categorical SAC) |
-| **Phase 6** | PLANNED | TBD | Training & Evaluation scripts |
+| **Phase 5** | COMPLETE | ~1,944 | RL Agents (QR-DQN + Categorical SAC + Replay Buffer) |
+| **Phase 6** | NEXT | TBD | Training & Evaluation scripts |
 | **Phase 7** | PLANNED | TBD | Metrics & Visualization |
 
-**Total Implementation:** ~4,829 lines of production code
-**Documentation:** ~1,400+ lines
+**Total Implementation:** ~6,773 lines of production code
+**Test Code:** ~453 lines (Phase 5 unit tests)
+**Documentation:** ~1,800+ lines
 
 ---
 
-## Next Phase: Phase 5 - QR-DQN & Categorical SAC Agents
+## Phase 5 Completion Summary
+
+### What Was Built
+
+**1. Prioritized Experience Replay Buffer** ✅
+- `agents/buffers/replay_buffer.py` (390 LOC)
+- Store experiences with TD-error priorities
+- Importance sampling for off-policy learning
+- Beta annealing (0.4 → 1.0 over time)
+- O(log N) efficient operations
+
+**2. QR-DQN Agent** ✅
+- `agents/qrdqn_agent.py` (505 LOC)
+- Distributional Q-learning with 51 quantiles
+- Quantile Huber loss with tau-weighted importance
+- Target network (hard updates every 2000 steps)
+- Epsilon-greedy exploration
+- 206K parameters
+
+**3. Categorical SAC Agent** ✅
+- `agents/categorical_sac_agent.py` (596 LOC)
+- Entropy-regularized policy learning
+- Twin Q-networks (319K parameters)
+- Entropy temperature auto-tuning
+- Soft target updates (tau=0.005, every step)
+
+**4. Configuration Centralization** ✅
+- All settings moved to `config/config.py`
+- `AGENT_TRAINING_PARAMS` for shared settings
+- Enhanced `QR_DQN_PARAMS` with epsilon decay
+
+**5. Comprehensive Testing** ✅
+- `test_phase5_agents.py` (318 LOC)
+- Unit tests for all components
+- 100% test pass rate (CPU + GPU)
+
+---
+
+## Next Phase: Phase 6 - Training & Evaluation Scripts
 
 ### What Needs to Be Built
 
-**1. Replay / Rollout Buffer** (`agents/buffers/rollout_buffer.py`)
-- Store experiences during environment interaction
-- Prioritized replay support for rare regimes
-- Quantile targets for distributional learning (QR-DQN)
+**1. Training Script** (`train.py`)
+- Load preprocessed datasets
+- Create train/eval environments
+- Training loop with periodic evaluation
+- Checkpoint management (save best models)
+- Logging and metrics collection
 
-**2. QR-DQN Agent** (`agents/qrdqn_agent.py`)
-- Initialize Q-networks with quantile heads
-- Collect transitions and update with quantile regression Huber loss
-- Target network updates and prioritized sampling
+**2. Agent-Specific Training** (`train_qrdqn.py` & `train_categorical_sac.py`)
+- QR-DQN: Epsilon decay schedule
+- SAC: Alpha (entropy) tracking
+- Both: Replay buffer warmup, gradient accumulation
 
-**3. Categorical SAC Agent** (`agents/categorical_sac_agent.py`)
-- Twin Q-networks and categorical policy head
-- Entropy temperature auto-tuning
-- Target smoothing and replay-based updates
+**3. Evaluation Script** (`evaluate.py`)
+- Load trained checkpoints
+- Run on test set (validation data)
+- Compute trading metrics:
+  - Cumulative returns
+  - Sharpe ratio
+  - Sortino ratio
+  - Maximum drawdown
+  - Win rate
+  - Trade statistics
 
 **4. Key Components to Implement:**
 
 ```python
-class ReplayBuffer:
-    """Store experiences with optional priorities/quantile targets."""
-    def store(self, state, action, reward, done, next_state)
-    def sample(self, batch_size)
-    def update_priorities(self, indices, priorities)
+def train_qrdqn(env, agent, config):
+    """Training loop for QR-DQN."""
+    # Initialize epsilon
+    # Collect experiences
+    # Train agent with replay buffer
+    # Evaluate periodically
+    # Save best checkpoints
 
-class QRDQNAgent:
-    def train_step(self, batch)
-    def select_action(self, state, epsilon)
-    def save(self, path)
-    def load(self, path)
+def train_categorical_sac(env, agent, config):
+    """Training loop for Categorical SAC."""
+    # Warm up replay buffer
+    # Collect experiences with stochastic policy
+    # Train actor, critics, and alpha
+    # Evaluate periodically
+    # Save best checkpoints
 
-class CategoricalSACAgent:
-    def train_step(self, batch)
-    def select_action(self, state, deterministic=False)
-    def save(self, path)
-    def load(self, path)
+def evaluate(env, agent, num_episodes):
+    """Evaluate trained agent on test set."""
+    # Run episodes
+    # Collect metrics
+    # Return statistics
 ```
 
-**5. Hyperparameters** (to centralize in `config/config.py`):
+**5. Hyperparameters** (already in `config/config.py`):
 
 ```python
 QR_DQN_PARAMS = {
@@ -508,43 +559,60 @@ git push origin main
 ## Tips for Next Developer/Bot
 
 ### Understanding the Codebase
-1. **Start with:** `README.md` for high-level overview
+1. **Start with:** `README.md` for high-level overview (now includes Phase 5)
 2. **Then read:** `CONTINUATION.md` (this file) for current status
-3. **Check:** `config/config.py` to understand all hyperparameters
-4. **Review:** `IMPLEMENTATION_PLAN.md` for detailed Phase 5 specs
+3. **Check:** `config/config.py` to understand all centralized settings
+4. **Review:** `PROJECT_STATUS.md` for quick status reference
+5. **Deep dive:** Phase-specific sections below
 
-### Before Starting Phase 5
-1. Verify all Phase 1-4 components work (use testing commands above)
+### Before Starting Phase 6
+1. Verify all Phase 1-5 components work:
+   ```bash
+   python test_phase5_agents.py  # Should pass all tests
+   ```
 2. Ensure data is downloaded (`data/storage/*.csv`)
 3. Ensure datasets are processed (`data/datasets/*_processed.csv`)
-4. Test both networks (Actor and Critic)
-5. Create `phase5-rl-agents` branch from `main`
+4. Test Phase 5 agents work on environment:
+   ```bash
+   python -c "from agents import QRDQNAgent, CategoricalSACAgent; print('Agents OK')"
+   ```
+5. Create `phase6-training` branch from `main`
 
-### During Phase 5 Implementation
-1. **Read Phase 5 section** in `IMPLEMENTATION_PLAN.md` lines 357-389
+### During Phase 6 Implementation
+1. **Read Phase 6 section** in this file (above)
 2. **Follow existing patterns:**
    - Use centralized config from `config/config.py`
-   - Add docstrings to all classes and methods
+   - Import agents/buffer from Phase 5: `from agents import QRDQNAgent, CategoricalSACAgent`
+   - Add comprehensive docstrings
    - Include test code in `if __name__ == '__main__'` blocks
-   - Use type hints for function signatures
-3. **RL Algorithm Flow (QR-DQN + Categorical SAC):**
+   - Use type hints throughout
+3. **Training Loop Architecture:**
    ```
-   Initialize shared Conv1D backbones
+   Load environment (PositionTradingEnv)
      ↓
-   Collect transitions into prioritized replay
+   Load or create agents (QR-DQN or SAC)
      ↓
-   QR-DQN: quantile regression loss + target network updates
-   Cat-SAC: twin Q updates, policy logits, entropy temperature tuning
-     ↓
-   Periodically update targets, log metrics, save checkpoints
+   For each timestep:
+     1. Select action (epsilon-greedy or stochastic)
+     2. Execute action in environment
+     3. Add experience to replay buffer
+     4. Train agent (if buffer has enough samples)
+     5. Periodically evaluate on test set
+     6. Save best checkpoint
    ```
+4. **Key Integration Points:**
+   - Agents use `config.QR_DQN_PARAMS` / `config.CATEGORICAL_SAC_PARAMS`
+   - Environment uses `config.PositionTradingEnv` parameters
+   - All training settings in `config.TRAINING_PARAMS`
 
 ### Common Pitfalls to Avoid
 - Don't hardcode hyperparameters (use `config/config.py`)
-- Don't forget to transpose for Conv1D: `(batch, seq, features)` → `(batch, features, seq)`
-- Don't create files without testing them first
+- Don't forget Conv1D expects (batch, channels, seq_length)
+- Don't train without warmup on empty replay buffer
+- Don't mix stochastic (SAC) and epsilon-greedy (QR-DQN) settings
+- Don't forget to detach tensors when converting to numpy for priorities
 - Don't commit without clear, descriptive commit messages
-- Don't merge to main without testing thoroughly
+- Don't merge to main without comprehensive testing
 
 ### What Makes This Implementation Special
 1. **Realistic Trading Simulation:**
@@ -569,33 +637,40 @@ git push origin main
 
 ## Summary for Next Session
 
-**What's Done:**
-- Data pipeline (Binance Futures OHLCV + Funding)
-- Preprocessing (21 active features + regime detection)
-- Trading environment (Realistic position-based)
-- Neural networks (Actor-Critic, 302K total params)
+**What's Done (Phase 1-5):**
+- ✅ Data pipeline (Binance Futures OHLCV + Funding)
+- ✅ Preprocessing (21 active features + regime detection)
+- ✅ Trading environment (Realistic position-based)
+- ✅ Neural networks (Actor-Critic, 302K total params)
+- ✅ Prioritized Experience Replay (500K capacity, PER)
+- ✅ QR-DQN Agent (206K params, distributional learning)
+- ✅ Categorical SAC Agent (319K params, entropy-regularized)
+- ✅ Configuration centralization (all settings in config.py)
+- ✅ Comprehensive testing (Phase 5 unit tests, 100% pass rate)
 
-**What's Next:**
-- Replay/quantile buffer (prioritized)
-- QR-DQN and Categorical SAC agents
-- Training script (train on all cryptos)
+**What's Next (Phase 6):**
+- Training script with full pipeline
+- Agent-specific training loops
+- Evaluation metrics computation
+- Checkpoint management
+- Logging and visualization
 
-**Ready to Start:**
+**Ready to Start Phase 6:**
 ```bash
 git checkout main
-git checkout -b phase5-rl-agents
-# Start implementing agents/buffers/rollout_buffer.py
+git checkout -b phase6-training
+# Start implementing train.py and evaluate.py
 ```
 
 **Expected Timeline:**
-- Phase 5: ~900-1100 lines (buffers + QR-DQN + Cat-SAC)
+- Phase 5: 1,944 lines (COMPLETE)
 - Phase 6: ~400-600 lines (Training/Eval scripts)
-- Phase 7: ~300-400 lines (Metrics)
+- Phase 7: ~300-400 lines (Metrics & Visualization)
 
-**Total Project:** ~6,500-7,500 lines when complete
+**Total Project:** ~7,500-7,900 lines when complete
 
 ---
 
 **Last Updated:** 2025-11-28
-**Next Update:** After Phase 5 completion
-**Questions?** Check README.md or IMPLEMENTATION_PLAN.md
+**Next Update:** After Phase 6 completion
+**Questions?** Check README.md (Phase 5 section), PROJECT_STATUS.md, or config/config.py

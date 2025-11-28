@@ -25,36 +25,46 @@ Original TensorFlow implementation: [kochlisGit/TraderNet-CRv2](https://github.c
 ```
 tradernet-pytorch/
 ├── config/
-│   └── config.py                  # Centralized hyperparameters & settings
+│   └── config.py                       # Centralized hyperparameters & settings
 ├── data/
 │   ├── downloaders/
-│   │   └── binance.py             # CCXT Binance Futures downloader
+│   │   └── binance.py                  # CCXT Binance Futures downloader
 │   ├── preprocessing/
-│   │   ├── ohlcv.py               # Log returns & hour extraction
-│   │   ├── technical.py           # Derived features
-│   │   └── regime.py              # Market regime detection
+│   │   ├── ohlcv.py                    # Log returns & hour extraction
+│   │   ├── technical.py                # Derived features
+│   │   ├── regime.py                   # Market regime detection
+│   │   └── funding.py                  # Funding rate processing
 │   ├── datasets/
-│   │   ├── builder.py             # Dataset building pipeline
-│   │   └── utils.py               # Train/eval split utilities
-│   └── storage/                   # Raw OHLCV data (gitignored)
+│   │   ├── builder.py                  # Dataset building pipeline
+│   │   └── utils.py                    # Train/eval split utilities
+│   └── storage/                        # Raw OHLCV data (gitignored)
 ├── analysis/
 │   └── technical/
-│       └── indicators_calc.py     # Technical indicator calculations
+│       └── indicators_calc.py          # Technical indicator calculations
 ├── environments/
-│   ├── trading_env.py             # Paper replication environment
-│   ├── position_trading_env.py    # Realistic trading environment
+│   ├── trading_env.py                  # Paper replication environment
+│   ├── position_trading_env.py         # Realistic position-based trading env
 │   └── rewards/
-│       ├── base.py                # Base reward class
-│       ├── market_limit.py        # MarketLimitOrder reward
-│       └── smurf.py               # Smurf conservative reward
+│       ├── base.py                     # Base reward class
+│       ├── market_limit.py             # MarketLimitOrder reward
+│       └── smurf.py                    # Smurf conservative reward
 ├── agents/
-│   └── networks/
-│       ├── actor.py               # Actor network (policy)
-│       └── critic.py              # Critic network (value function)
-├── metrics/                       # (Phase 5+) Trading metrics
-├── checkpoints/                   # Model checkpoints (gitignored)
-├── IMPLEMENTATION_PLAN.md         # Detailed implementation plan
-└── requirements.txt               # Python dependencies
+│   ├── networks/
+│   │   ├── backbone.py                 # Shared Conv1D backbone
+│   │   ├── heads.py                    # Output heads for agents
+│   │   ├── actor.py                    # Actor network (categorical policy)
+│   │   └── critic.py                   # Critic network (value function)
+│   ├── buffers/
+│   │   └── replay_buffer.py            # Prioritized Experience Replay (PER)
+│   ├── qrdqn_agent.py                  # QR-DQN agent (distributional)
+│   └── categorical_sac_agent.py        # Categorical SAC agent (entropy regularized)
+├── metrics/                            # Trading metrics & analysis
+├── checkpoints/                        # Model checkpoints (gitignored)
+├── logs/                               # Training logs (gitignored)
+├── IMPLEMENTATION_PLAN.md              # Detailed 7-phase implementation plan
+├── PROJECT_STATUS.md                   # Current project status
+├── CONTINUATION.md                     # Continuation guide for next session
+└── requirements.txt                    # Python dependencies
 ```
 
 ---
@@ -825,13 +835,143 @@ Closed position, Final balance: $9,975.21
 
 ---
 
+## Phase 5: RL Agents (QR-DQN & Categorical SAC)
+
+### Overview
+
+Phase 5 implements two state-of-the-art RL algorithms for trading:
+
+#### QR-DQN (Quantile Regression Deep Q-Network)
+```python
+from agents.qrdqn_agent import QRDQNAgent
+
+agent = QRDQNAgent(num_actions=3, num_quantiles=51)
+agent.add_experience(state, action, reward, next_state, done)
+metrics = agent.train_step()
+action = agent.select_action(state, epsilon=0.1)
+```
+
+**Features:**
+- Distributional Q-learning with quantile regression
+- Huber loss with tau-weighted importance
+- Target network updates (every 2000 steps)
+- Epsilon-greedy exploration
+- Prioritized Experience Replay (500K capacity)
+
+#### Categorical SAC (Soft Actor-Critic)
+```python
+from agents.categorical_sac_agent import CategoricalSACAgent
+
+agent = CategoricalSACAgent(num_actions=3)
+agent.add_experience(state, action, reward, next_state, done)
+metrics = agent.train_step()
+action = agent.select_action(state, deterministic=False)
+```
+
+**Features:**
+- Off-policy entropy-regularized learning
+- Categorical policy (discrete action distribution)
+- Twin Q-networks to reduce overestimation
+- Entropy temperature auto-tuning
+- Soft target updates (tau=0.005, every step)
+- Prioritized Experience Replay (500K capacity)
+
+### Prioritized Experience Replay Buffer
+```python
+from agents.buffers.replay_buffer import ReplayBuffer
+
+buffer = ReplayBuffer(capacity=500_000, alpha=0.6, beta_start=0.4)
+buffer.add(state, action, reward, next_state, done)
+batch = buffer.sample(batch_size=128)  # Prioritized sampling
+buffer.update_priorities(indices, td_errors)  # Priority update
+```
+
+**Features:**
+- Prioritized sampling (PER) with importance weights
+- TD-error based priority updates
+- Beta annealing (0.4 → 1.0)
+- Efficient O(log N) operations
+- GPU support
+
+### Network Architecture
+
+Both agents use a **shared Conv1D backbone**:
+```
+Input: (batch, 12, 28) → 12 timesteps × 28 features
+Conv1D: 28→32 channels, kernel=3
+Flatten: 32×12=384 features
+FC1: 384→256 (GELU)
+FC2: 256→256 (GELU)
+Output: 256 features
+```
+
+**Agent-Specific Heads:**
+- **QR-DQN**: Quantile head → (num_actions, num_quantiles)
+- **SAC Actor**: Policy head → (num_actions,) softmax
+- **SAC Critic**: Q-value head → (num_actions,)
+
+### Configuration
+
+All Phase 5 settings are centralized in `config.py`:
+
+```python
+# QR-DQN Parameters
+QR_DQN_PARAMS = {
+    'learning_rate': 0.0005,
+    'gamma': 0.99,
+    'num_quantiles': 51,
+    'batch_size': 128,
+    'target_update_interval': 2000,
+    'huber_kappa': 1.0,
+    'replay_buffer_size': 500_000,
+    'priority_alpha': 0.6,
+    'priority_beta_start': 0.4,
+    'priority_beta_frames': 500_000,
+}
+
+# Categorical SAC Parameters
+CATEGORICAL_SAC_PARAMS = {
+    'learning_rate': 0.0005,
+    'gamma': 0.99,
+    'tau': 0.005,
+    'batch_size': 256,
+    'entropy_target': -1.0,
+    'alpha_init': 0.2,
+    'replay_buffer_size': 500_000,
+    'target_update_interval': 1,
+}
+
+# Agent Training Settings
+AGENT_TRAINING_PARAMS = {
+    'gradient_clip_norm': 10.0,
+    'td_error_epsilon': 1e-6,
+    'log_epsilon': 1e-8,
+}
+```
+
+### Testing Phase 5
+
+Run comprehensive unit tests:
+```bash
+python test_phase5_agents.py
+```
+
+Tests cover:
+- Replay buffer: add, sample, priority updates
+- QR-DQN: initialization, training, checkpoints
+- Categorical SAC: initialization, training, entropy tuning
+- Agent comparison on random states
+- GPU device support
+
+---
+
 ## Roadmap
 
 - [x] **Phase 1**: Project setup & Binance data downloader
 - [x] **Phase 2**: Technical analysis & preprocessing pipeline
 - [x] **Phase 3**: Trading environment & reward functions
 - [x] **Phase 4**: Neural networks (Actor/Critic)
-- [ ] **Phase 5**: RL agents (QR-DQN + Categorical SAC)
+- [x] **Phase 5**: RL agents (QR-DQN + Categorical SAC)
 - [ ] **Phase 6**: Training & evaluation scripts
 - [ ] **Phase 7**: Metrics & visualization
 
