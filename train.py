@@ -15,14 +15,15 @@ import pandas as pd
 import torch
 from pathlib import Path
 from typing import Optional, Dict
+from tqdm import tqdm
 
 from config.config import (
     SUPPORTED_CRYPTOS, TRAINING_PARAMS, CHECKPOINT_PARAMS, LOGGING_PARAMS,
     DATA_LOADING_PARAMS, METRICS_PARAMS, EVALUATION_PARAMS,
     QR_DQN_PARAMS, CATEGORICAL_SAC_PARAMS, NUM_ACTIONS, OBS_SHAPE,
+    EVAL_HOURS, SEQUENCE_LENGTH, FEATURES,
 )
-from data.datasets.builder import DatasetBuilder
-from data.datasets.utils import train_eval_split
+from data.datasets.utils import prepare_training_data
 from environments.position_trading_env import PositionTradingEnv
 from agents.qrdqn_agent import QRDQNAgent
 from agents.categorical_sac_agent import CategoricalSACAgent
@@ -31,58 +32,72 @@ from utils.checkpoint import CheckpointManager
 from utils.metrics import TradingMetrics
 
 
-def load_dataset(crypto: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_dataset(crypto: str) -> dict:
     """
-    Load and split dataset for training and evaluation.
+    Load and prepare dataset for training and evaluation.
 
     Args:
         crypto: Cryptocurrency symbol (e.g., 'BTC', 'ETH')
 
     Returns:
-        Tuple of (train_data, eval_data)
+        Dictionary with train/eval data including sequences and prices
     """
     dataset_path = Path(f"data/datasets/{crypto}_processed.csv")
 
     if not dataset_path.exists():
         print(f"Error: Dataset not found at {dataset_path}")
-        print("Please download and preprocess data first using data/downloaders/binance.py")
+        print("Please download and preprocess data first:")
+        print("  python -m data.downloaders.binance")
+        print("  python -m data.datasets.builder")
         raise FileNotFoundError(f"Dataset: {dataset_path}")
 
-    # Load full dataset
+    # Load and prepare all data
     print(f"Loading dataset: {dataset_path}")
-    df = pd.read_csv(dataset_path)
-    print(f"Loaded {len(df)} samples")
+    data = prepare_training_data(str(dataset_path))
+    
+    print(f"Train: {len(data['train']['sequences'])} samples")
+    print(f"Eval: {len(data['eval']['sequences'])} samples")
 
-    # Split into train and eval
-    train_data, eval_data = train_eval_split(
-        df,
-        train_ratio=DATA_LOADING_PARAMS['train_ratio'],
-        shuffle=DATA_LOADING_PARAMS['shuffle']
-    )
-    print(f"Train: {len(train_data)} samples, Eval: {len(eval_data)} samples")
-
-    return train_data, eval_data
+    return data
 
 
-def create_environments(
-    train_data: pd.DataFrame,
-    eval_data: pd.DataFrame,
-) -> tuple[PositionTradingEnv, PositionTradingEnv]:
+def create_environments(data: dict) -> tuple[PositionTradingEnv, PositionTradingEnv]:
     """
     Create training and evaluation environments.
 
     Args:
-        train_data: Training dataset
-        eval_data: Evaluation dataset
+        data: Dictionary from prepare_training_data with sequences and prices
 
     Returns:
         Tuple of (train_env, eval_env)
     """
-    train_env = PositionTradingEnv(data=train_data)
-    eval_env = PositionTradingEnv(data=eval_data)
+    # Get funding rates if available
+    train_funding = None
+    eval_funding = None
+    
+    if 'funding_rate' in data['train']['df'].columns:
+        train_funding = data['train']['df']['funding_rate'].values[SEQUENCE_LENGTH-1:].astype(np.float32)
+    if 'funding_rate' in data['eval']['df'].columns:
+        eval_funding = data['eval']['df']['funding_rate'].values[SEQUENCE_LENGTH-1:].astype(np.float32)
+    
+    train_env = PositionTradingEnv(
+        sequences=data['train']['sequences'],
+        highs=data['train']['highs'],
+        lows=data['train']['lows'],
+        closes=data['train']['closes'],
+        funding_rates=train_funding,
+    )
+    
+    eval_env = PositionTradingEnv(
+        sequences=data['eval']['sequences'],
+        highs=data['eval']['highs'],
+        lows=data['eval']['lows'],
+        closes=data['eval']['closes'],
+        funding_rates=eval_funding,
+    )
 
-    print(f"Train environment: {len(train_data)} samples")
-    print(f"Eval environment: {len(eval_data)} samples")
+    print(f"Train environment: {len(data['train']['sequences'])} steps")
+    print(f"Eval environment: {len(data['eval']['sequences'])} steps")
 
     return train_env, eval_env
 
@@ -131,9 +146,9 @@ def train_qrdqn(
     agent: QRDQNAgent,
     total_timesteps: int,
     eval_freq: int,
-    save_freq: int,
     log_dir: str,
     checkpoint_dir: str,
+    crypto: str,
     resume_checkpoint: Optional[str] = None,
 ):
     """
@@ -145,19 +160,23 @@ def train_qrdqn(
         agent: QR-DQN agent
         total_timesteps: Total training steps
         eval_freq: Evaluation frequency
-        save_freq: Checkpoint save frequency
         log_dir: Logging directory
         checkpoint_dir: Checkpoint directory
+        crypto: Cryptocurrency symbol (for checkpoint naming)
         resume_checkpoint: Path to checkpoint to resume from
     """
     # Initialize logger and checkpoint manager
-    logger = TrainingLogger(log_dir=log_dir, experiment_name="qrdqn_training")
+    logger = TrainingLogger(log_dir=log_dir, experiment_name=f"qrdqn_{crypto}")
     checkpoint_mgr = CheckpointManager(
         checkpoint_dir=checkpoint_dir,
         metric_name=CHECKPOINT_PARAMS['metric_name'],
         mode=CHECKPOINT_PARAMS['mode'],
         keep_n_best=CHECKPOINT_PARAMS['keep_n_best'],
     )
+    
+    # Checkpoint naming with crypto
+    best_checkpoint_name = f"qrdqn_{crypto}_best.pt"
+    last_checkpoint_name = f"qrdqn_{crypto}_last.pt"
 
     # Load checkpoint if provided
     if resume_checkpoint:
@@ -174,11 +193,16 @@ def train_qrdqn(
     obs, _ = env.reset()
     episode_reward = 0
     episode_length = 0
+    num_episodes = 0
+    last_loss = 0.0
 
     print(f"Starting QR-DQN training: {total_timesteps} steps")
     print(f"Epsilon decay: {epsilon_start:.3f} -> {epsilon_end:.3f} over {epsilon_decay_frames} steps")
 
-    for step in range(start_step, start_step + total_timesteps):
+    # Progress bar
+    pbar = tqdm(range(start_step, start_step + total_timesteps), desc="Training QR-DQN", unit="step")
+    
+    for step in pbar:
         # Epsilon decay (linear)
         progress = min(step / epsilon_decay_frames, 1.0)
         epsilon = epsilon_start - progress * (epsilon_start - epsilon_end)
@@ -197,6 +221,9 @@ def train_qrdqn(
         if agent.replay_buffer.is_ready(agent.batch_size):
             metrics = agent.train_step()
 
+            if metrics:
+                last_loss = metrics['loss']
+                
             if step % TRAINING_PARAMS['log_freq'] == 0 and metrics:
                 logger.log_step(step, {
                     'loss': metrics['loss'],
@@ -210,9 +237,17 @@ def train_qrdqn(
         episode_length += 1
 
         if done:
+            num_episodes += 1
             logger.log_episode(step, {
                 'reward': episode_reward,
                 'length': episode_length,
+            })
+            # Update progress bar with episode info
+            pbar.set_postfix({
+                'eps': f"{epsilon:.3f}",
+                'loss': f"{last_loss:.4f}",
+                'ep_ret': f"{episode_reward:.2f}",
+                'episodes': num_episodes,
             })
             obs, _ = env.reset()
             episode_reward = 0
@@ -222,16 +257,36 @@ def train_qrdqn(
 
         # Periodic evaluation
         if (step + 1) % eval_freq == 0:
+            pbar.set_description("Evaluating...")
             eval_metrics = evaluate_agent(eval_env, agent, agent_type='qrdqn')
             logger.log_eval(step, eval_metrics)
+            pbar.set_description("Training QR-DQN")
 
-            # Save checkpoint
-            is_best = checkpoint_mgr._is_better(eval_metrics['mean_return'])
-            checkpoint_mgr.save_checkpoint(agent, step, eval_metrics, is_best=is_best)
-
-        # Periodic save
-        if (step + 1) % save_freq == 0:
-            checkpoint_mgr.save_checkpoint(agent, step, {}, is_best=False)
+            # Save best checkpoint if improved
+            if checkpoint_mgr._is_better(eval_metrics['mean_return']):
+                checkpoint_mgr.best_value = eval_metrics['mean_return']
+                best_path = Path(checkpoint_dir) / best_checkpoint_name
+                torch.save({
+                    'step': step,
+                    'agent_state': agent.q_network.state_dict(),
+                    'target_state': agent.target_q_network.state_dict(),
+                    'optimizer_state': agent.optimizer.state_dict(),
+                    'metrics': eval_metrics,
+                }, best_path)
+                print(f"\n✓ New best checkpoint saved: {best_path} (mean_return: {eval_metrics['mean_return']:.4f})")
+    
+    pbar.close()
+    
+    # Save last checkpoint
+    last_path = Path(checkpoint_dir) / last_checkpoint_name
+    torch.save({
+        'step': step,
+        'agent_state': agent.q_network.state_dict(),
+        'target_state': agent.target_q_network.state_dict(),
+        'optimizer_state': agent.optimizer.state_dict(),
+        'metrics': {},
+    }, last_path)
+    print(f"Last checkpoint saved: {last_path}")
 
     logger.save()
     print("QR-DQN training complete!")
@@ -243,9 +298,9 @@ def train_categorical_sac(
     agent: CategoricalSACAgent,
     total_timesteps: int,
     eval_freq: int,
-    save_freq: int,
     log_dir: str,
     checkpoint_dir: str,
+    crypto: str,
     resume_checkpoint: Optional[str] = None,
 ):
     """
@@ -257,19 +312,23 @@ def train_categorical_sac(
         agent: Categorical SAC agent
         total_timesteps: Total training steps
         eval_freq: Evaluation frequency
-        save_freq: Checkpoint save frequency
         log_dir: Logging directory
         checkpoint_dir: Checkpoint directory
+        crypto: Cryptocurrency symbol (for checkpoint naming)
         resume_checkpoint: Path to checkpoint to resume from
     """
     # Initialize logger and checkpoint manager
-    logger = TrainingLogger(log_dir=log_dir, experiment_name="sac_training")
+    logger = TrainingLogger(log_dir=log_dir, experiment_name=f"sac_{crypto}")
     checkpoint_mgr = CheckpointManager(
         checkpoint_dir=checkpoint_dir,
         metric_name=CHECKPOINT_PARAMS['metric_name'],
         mode=CHECKPOINT_PARAMS['mode'],
         keep_n_best=CHECKPOINT_PARAMS['keep_n_best'],
     )
+    
+    # Checkpoint naming with crypto
+    best_checkpoint_name = f"sac_{crypto}_best.pt"
+    last_checkpoint_name = f"sac_{crypto}_last.pt"
 
     # Load checkpoint if provided
     if resume_checkpoint:
@@ -283,7 +342,7 @@ def train_categorical_sac(
     print(f"Warmup: Filling replay buffer with {warmup_steps} random actions...")
 
     obs, _ = env.reset()
-    for _ in range(warmup_steps):
+    for _ in tqdm(range(warmup_steps), desc="Warmup", unit="step"):
         action = env.action_space.sample()
         next_obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
@@ -293,10 +352,15 @@ def train_categorical_sac(
     obs, _ = env.reset()
     episode_reward = 0
     episode_length = 0
+    num_episodes = 0
+    last_actor_loss = 0.0
 
     print(f"Starting Categorical SAC training: {total_timesteps} steps")
 
-    for step in range(start_step, start_step + total_timesteps):
+    # Progress bar
+    pbar = tqdm(range(start_step, start_step + total_timesteps), desc="Training SAC", unit="step")
+    
+    for step in pbar:
         # Select action (stochastic)
         action = agent.select_action(obs, deterministic=False)
 
@@ -311,6 +375,9 @@ def train_categorical_sac(
         if agent.replay_buffer.is_ready(agent.batch_size):
             metrics = agent.train_step()
 
+            if metrics:
+                last_actor_loss = metrics['actor_loss']
+                
             if step % TRAINING_PARAMS['log_freq'] == 0 and metrics:
                 logger.log_step(step, {
                     'actor_loss': metrics['actor_loss'],
@@ -325,9 +392,17 @@ def train_categorical_sac(
         episode_length += 1
 
         if done:
+            num_episodes += 1
             logger.log_episode(step, {
                 'reward': episode_reward,
                 'length': episode_length,
+            })
+            # Update progress bar with episode info
+            pbar.set_postfix({
+                'alpha': f"{agent.log_alpha.exp().item():.3f}",
+                'loss': f"{last_actor_loss:.4f}",
+                'ep_ret': f"{episode_reward:.2f}",
+                'episodes': num_episodes,
             })
             obs, _ = env.reset()
             episode_reward = 0
@@ -337,17 +412,51 @@ def train_categorical_sac(
 
         # Periodic evaluation
         if (step + 1) % eval_freq == 0:
+            pbar.set_description("Evaluating...")
             eval_metrics = evaluate_agent(eval_env, agent, agent_type='sac')
             logger.log_eval(step, eval_metrics)
+            pbar.set_description("Training SAC")
 
-            # Save checkpoint
-            is_best = checkpoint_mgr._is_better(eval_metrics['mean_return'])
-            checkpoint_mgr.save_checkpoint(agent, step, eval_metrics, is_best=is_best)
+            # Save best checkpoint if improved
+            if checkpoint_mgr._is_better(eval_metrics['mean_return']):
+                checkpoint_mgr.best_value = eval_metrics['mean_return']
+                best_path = Path(checkpoint_dir) / best_checkpoint_name
+                torch.save({
+                    'step': step,
+                    'actor_state': agent.actor.state_dict(),
+                    'q1_state': agent.q1_network.state_dict(),
+                    'q2_state': agent.q2_network.state_dict(),
+                    'target_q1_state': agent.target_q1_network.state_dict(),
+                    'target_q2_state': agent.target_q2_network.state_dict(),
+                    'actor_optimizer': agent.actor_optimizer.state_dict(),
+                    'q1_optimizer': agent.q1_optimizer.state_dict(),
+                    'q2_optimizer': agent.q2_optimizer.state_dict(),
+                    'alpha_optimizer': agent.alpha_optimizer.state_dict(),
+                    'log_alpha': agent.log_alpha.data,
+                    'metrics': eval_metrics,
+                }, best_path)
+                print(f"\n✓ New best checkpoint saved: {best_path} (mean_return: {eval_metrics['mean_return']:.4f})")
 
-        # Periodic save
-        if (step + 1) % save_freq == 0:
-            checkpoint_mgr.save_checkpoint(agent, step, {}, is_best=False)
-
+    pbar.close()
+    
+    # Save last checkpoint
+    last_path = Path(checkpoint_dir) / last_checkpoint_name
+    torch.save({
+        'step': step,
+        'actor_state': agent.actor.state_dict(),
+        'q1_state': agent.q1_network.state_dict(),
+        'q2_state': agent.q2_network.state_dict(),
+        'target_q1_state': agent.target_q1_network.state_dict(),
+        'target_q2_state': agent.target_q2_network.state_dict(),
+        'actor_optimizer': agent.actor_optimizer.state_dict(),
+        'q1_optimizer': agent.q1_optimizer.state_dict(),
+        'q2_optimizer': agent.q2_optimizer.state_dict(),
+        'alpha_optimizer': agent.alpha_optimizer.state_dict(),
+        'log_alpha': agent.log_alpha.data,
+        'metrics': {},
+    }, last_path)
+    print(f"Last checkpoint saved: {last_path}")
+    
     logger.save()
     print("Categorical SAC training complete!")
 
@@ -435,12 +544,6 @@ def main():
         help="Evaluation frequency (steps)",
     )
     parser.add_argument(
-        "--save-freq",
-        type=int,
-        default=TRAINING_PARAMS['save_freq'],
-        help="Checkpoint save frequency (steps)",
-    )
-    parser.add_argument(
         "--log-dir",
         type=str,
         default=LOGGING_PARAMS['log_dir'],
@@ -473,6 +576,9 @@ def main():
     )
 
     args = parser.parse_args()
+    
+    # Create checkpoint directory
+    Path(args.checkpoint_dir).mkdir(parents=True, exist_ok=True)
 
     # Set seed for reproducibility
     np.random.seed(args.seed)
@@ -484,11 +590,11 @@ def main():
 
     # Load dataset
     print(f"\nLoading {args.crypto} dataset...")
-    train_data, eval_data = load_dataset(args.crypto)
+    data = load_dataset(args.crypto)
 
     # Create environments
     print(f"\nCreating environments...")
-    train_env, eval_env = create_environments(train_data, eval_data)
+    train_env, eval_env = create_environments(data)
 
     # Create agent
     print(f"\nCreating {args.agent.upper()} agent...")
@@ -506,9 +612,9 @@ def main():
             agent=agent,
             total_timesteps=args.timesteps,
             eval_freq=args.eval_freq,
-            save_freq=args.save_freq,
             log_dir=args.log_dir,
             checkpoint_dir=args.checkpoint_dir,
+            crypto=args.crypto,
             resume_checkpoint=args.resume,
         )
     else:  # sac
@@ -518,9 +624,9 @@ def main():
             agent=agent,
             total_timesteps=args.timesteps,
             eval_freq=args.eval_freq,
-            save_freq=args.save_freq,
             log_dir=args.log_dir,
             checkpoint_dir=args.checkpoint_dir,
+            crypto=args.crypto,
             resume_checkpoint=args.resume,
         )
 

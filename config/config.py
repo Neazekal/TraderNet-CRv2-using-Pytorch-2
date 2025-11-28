@@ -166,13 +166,6 @@ FUNDING_FEE_ENABLED = True              # Apply funding fees when holding positi
 # =============================================================================
 # Reward Function Settings
 # =============================================================================
-# Smurf agent parameters
-SMURF_HOLD_REWARD = 0.0055      # Fixed positive reward for HOLD in Smurf
-
-# Reward types
-REWARD_MARKET_LIMIT = 'market_limit'
-REWARD_SMURF = 'smurf'
-
 # Drawdown Penalty Settings
 # Penalizes agent when equity falls below peak (encourages capital preservation)
 DRAWDOWN_PENALTY_ENABLED = True

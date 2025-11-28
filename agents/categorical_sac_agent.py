@@ -27,6 +27,8 @@ from pathlib import Path
 from config.config import (
     CATEGORICAL_SAC_PARAMS,
     NUM_ACTIONS,
+    NUM_FEATURES,
+    SEQUENCE_LENGTH,
     OBS_SHAPE,
     ACTION_NAMES,
     AGENT_TRAINING_PARAMS,
@@ -508,15 +510,16 @@ class SACQNetworkBackbone(nn.Module):
     def __init__(self):
         super().__init__()
 
-        # Conv1D layer
+        # Conv1D layer - use NUM_FEATURES from config
         self.conv1d = nn.Conv1d(
-            in_channels=28,
+            in_channels=NUM_FEATURES,
             out_channels=32,
             kernel_size=3,
             padding=1,
         )
 
-        self.flatten_size = 32 * 12
+        # Flattened size: 32 channels * SEQUENCE_LENGTH timesteps
+        self.flatten_size = 32 * SEQUENCE_LENGTH
 
         # Fully connected layers
         self.fc1 = nn.Linear(self.flatten_size, 256)

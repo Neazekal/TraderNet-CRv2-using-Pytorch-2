@@ -27,6 +27,8 @@ from config.config import (
     QR_DQN_PARAMS,
     NETWORK_PARAMS,
     NUM_ACTIONS,
+    NUM_FEATURES,
+    SEQUENCE_LENGTH,
     OBS_SHAPE,
     ACTION_NAMES,
     AGENT_TRAINING_PARAMS,
@@ -402,23 +404,16 @@ class QuantileQNetworkBackbone(nn.Module):
     def __init__(self):
         super().__init__()
 
-        # Conv1D layer
+        # Conv1D layer - use NUM_FEATURES from config
         self.conv1d = nn.Conv1d(
-            in_channels=28,
+            in_channels=NUM_FEATURES,
             out_channels=32,
             kernel_size=3,
             padding=1,
         )
 
-        # Calculate flattened size after conv
-        # Input: (batch, 21, 12) → Conv1D → (batch, 32, 12) → flatten → (batch, 384)
-        # Actually with padding: 21 channels → 32 channels, 12 timesteps stay 12
-        # So flat size = 32 * 12 = 384, but let's compute properly:
-        # (batch, 12, 21) → transpose to (batch, 21, 12) for Conv1D
-        # Conv1d(21→32, kernel=3, padding=1) keeps temporal size → (batch, 32, 12)
-        # flatten → 32 * 12 = 384
-
-        self.flatten_size = 32 * 12  # Empirically determined
+        # Flattened size: 32 channels * SEQUENCE_LENGTH timesteps
+        self.flatten_size = 32 * SEQUENCE_LENGTH
 
         # Fully connected layers
         self.fc1 = nn.Linear(self.flatten_size, 256)
@@ -428,6 +423,7 @@ class QuantileQNetworkBackbone(nn.Module):
         self.activation = nn.GELU()
 
         # Weight initialization
+        self._init_weights()
         self._init_weights()
 
     def _init_weights(self):

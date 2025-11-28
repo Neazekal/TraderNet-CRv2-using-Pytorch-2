@@ -1,340 +1,142 @@
-# Project Status - Quick Reference
+# Project Status
 
-**Last Updated:** 2025-11-28
-**Project:** TraderNet-CRv2 PyTorch Implementation
-**Current Phase:** Phase 6 Complete
-**Next Phase:** Phase 7 (Metrics & Visualization) 
-
----
-
-## Quick Stats
-
-| Metric | Value |
-|--------|-------|
-| **Phases Complete** | 6 of 7 (86%) |
-| **Production Code** | ~9,368 lines (Phase 6: +2,513 new) |
-| **Configuration** | ~97 new lines (centralized in config.py) |
-| **Documentation** | ~2,000+ lines (added CONFIG_GUIDE.md) |
-| **Neural Networks** | 5 total (Actor, Critic, Q1, Q2, Quantile) |
-| **Total Parameters** | ~525K (Actor+Critic+Q-networks) |
-| **RL Agents** | 2 (QR-DQN: 206K params, SAC: 319K params) |
-| **Replay Buffer** | Prioritized (500K capacity) |
-| **Features** | 28 (21 active + 7 reserved) |
-| **Supported Cryptos** | 7 (BTC, ETH, XRP, SOL, BNB, TRX, DOGE) |
-| **Test Coverage** | 100% Phase 5 (all components tested) |
+**Last Updated:** 2025-11-28  
+**Project:** TraderNet-CRv2 PyTorch Implementation  
+**Status:** Phase 6 Complete (Training & Evaluation Working)
 
 ---
 
-## Phase Completion Status
+## Quick Summary
 
-```
-Phase 1: Data Download              (COMPLETE - 1,500 LOC)
-Phase 2: Preprocessing              (COMPLETE - 1,500 LOC)
-Phase 3: Trading Environment        (COMPLETE - 1,300 LOC)
-Phase 4: Neural Networks            (COMPLETE - 529 LOC)
-Phase 5: QR-DQN & Categorical SAC   (COMPLETE - 1,944 LOC)
-Phase 6: Training & Evaluation ✓    (COMPLETE - 2,513 LOC + config)
-Phase 7: Metrics & Visualization    (PLANNED - ~300-400 LOC estimated)
-```
-
-**Phase 6 Breakdown:**
-- train.py: 390 LOC (QR-DQN + SAC unified training)
-- evaluate.py: 310 LOC (comprehensive evaluation)
-- utils/metrics.py: 165 LOC (Sharpe, Sortino, Drawdown, etc.)
-- utils/logger.py: 155 LOC (experiment logging & progress)
-- utils/checkpoint.py: 160 LOC (model persistence)
-- metrics/trading/ modules: 265 LOC (Sharpe, Sortino, Drawdown calculators)
-- config/config.py: 97 LOC (centralized Phase 6 settings)
-- CONFIG_GUIDE.md: 200 LOC (comprehensive documentation)
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Data Download | ✅ Complete | Binance Futures OHLCV + funding rates |
+| Preprocessing | ✅ Complete | 21 features with Min-Max scaling |
+| Trading Environment | ✅ Complete | Position-based with SL/TP |
+| Neural Networks | ✅ Complete | Actor, Critic, Conv1D backbone |
+| QR-DQN Agent | ✅ Complete | Distributional Q-learning |
+| Categorical SAC | ✅ Complete | Entropy-regularized policy |
+| Training Script | ✅ Complete | Progress bar, checkpoints |
+| Evaluation Script | ✅ Complete | Full metrics report |
+| Visualization | 🔲 Planned | Phase 7 |
 
 ---
 
-## What Works Right Now
+## What Works Now
 
-### Data Pipeline
-- Download OHLCV + funding rates from Binance Futures
-- Process into 28 features with Min-Max scaling
-- Train/eval split (last 2250 hours for evaluation)
-
-### Trading Environment
-- Position-based trading simulation
-- Realistic costs (fees, slippage, funding)
-- Stop-loss/take-profit auto-triggers
-- Instant position flipping (LONG↔SHORT)
-- Capital management with leverage
-
-### Neural Networks
-- **ActorNetwork:** Categorical policy (3 actions)
-- **CriticNetwork:** State value estimation V(s)
-- Both use shared Conv1D + FC backbone
-- GELU activation, Kaiming initialization
-- ~151K (Actor) + ~151K (Critic) parameters
-
-### RL Agents (Phase 5)
-- **QR-DQN Agent:** Distributional Q-learning with quantiles
-  - 206K parameters (Q-network + quantile head)
-  - Quantile Huber loss
-  - Target network updates (every 2000 steps)
-  - Epsilon-greedy exploration
-
-- **Categorical SAC Agent:** Entropy-regularized policy learning
-  - 319K parameters (Actor + Twin Q-networks)
-  - Twin Q-networks for critic stability
-  - Entropy temperature auto-tuning
-  - Soft target updates (tau=0.005, every step)
-
-### Prioritized Experience Replay
-- 500K capacity buffer
-- Importance sampling weights
-- TD-error based priority updates
-- Beta annealing (0.4 → 1.0)
-- O(log N) efficient operations
-
----
-
-## Phase 6 Complete ✓
-
-### Implemented Components
-- ✓ `train.py` (390 LOC) - Unified training for QR-DQN and SAC
-- ✓ `evaluate.py` (310 LOC) - Comprehensive evaluation framework
-- ✓ `utils/metrics.py` (165 LOC) - Trading metrics calculator
-- ✓ `utils/logger.py` (155 LOC) - Training progress logging
-- ✓ `utils/checkpoint.py` (160 LOC) - Model checkpoint management
-- ✓ `metrics/trading/sharpe.py` (70 LOC) - Sharpe ratio
-- ✓ `metrics/trading/sortino.py` (75 LOC) - Sortino ratio
-- ✓ `metrics/trading/drawdown.py` (120 LOC) - Drawdown analysis
-- ✓ `CONFIG_GUIDE.md` (200 LOC) - Comprehensive documentation
-- ✓ Centralized configuration in `config/config.py` (97 new lines)
-
-### What's Next (Phase 7)
-
-Phase 7 will implement advanced metrics and visualization:
-- Performance metrics visualization (equity curves, drawdown plots)
-- Backtesting framework with multiple strategies
-- Hyperparameter tuning utilities
-- Multi-crypto portfolio management
-- Performance comparison tools
-- Additional metrics (Information Ratio, Payoff Ratio, etc.)
-
----
-
-## How to Use Phase 6 Training & Evaluation
-
-### Training QR-DQN on BTC
+### Training
 ```bash
-python train.py --agent qrdqn --crypto BTC --timesteps 1000000
+# Train QR-DQN on BTC
+python train.py --agent qrdqn --crypto BTC --timesteps 100000
+
+# Train SAC on ETH  
+python train.py --agent sac --crypto ETH --timesteps 100000
 ```
 
-### Training Categorical SAC on ETH
+**Features:**
+- Real-time progress bar with metrics (loss, epsilon/alpha, episode return)
+- Automatic best model saving when mean_return improves
+- Saves only 2 files: `{agent}_{crypto}_best.pt` and `{agent}_{crypto}_last.pt`
+- Resume training from checkpoint
+
+### Evaluation
 ```bash
-python train.py --agent sac --crypto ETH --timesteps 500000 --warmup-steps 10000
+python evaluate.py --checkpoint checkpoints/qrdqn_BTC_best.pt --crypto BTC
 ```
 
-### Evaluating Trained Agent
-```bash
-python evaluate.py --checkpoint checkpoints/best.pt --crypto BTC --num-episodes 10
-```
-
-### Customizing Configuration
-Edit `config/config.py` to modify:
-- `TRAINING_PARAMS` - Training loop hyperparameters
-- `CHECKPOINT_PARAMS` - Model saving and optimization metric
-- `LOGGING_PARAMS` - Log file locations and frequency
-- `METRICS_PARAMS` - Metric calculation settings (risk-free rate, etc.)
-- `DATA_LOADING_PARAMS` - Train/eval split and normalization
-- `EVALUATION_PARAMS` - Evaluation settings
-
-See `CONFIG_GUIDE.md` for complete parameter reference.
+**Output includes:**
+- Return statistics (mean, std, min, max)
+- Risk metrics (Sharpe, Sortino, Max Drawdown, Calmar)
+- Trading stats (win rate, profit factor, total trades)
 
 ---
 
-## Key Files for Reference
+## Key Files
 
-| File | Purpose | Lines |
-|------|---------|-------|
-| `README.md` | User guide with Phase 5 docs | 950+ |
-| `PROJECT_STATUS.md` | This file - current status | 200+ |
-| `CONTINUATION.md` | Continuation guide for next session | 600 |
-| `IMPLEMENTATION_PLAN.md` | Detailed 7-phase plan | 510 |
-| `config/config.py` | All hyperparameters (centralized) | 260+ |
-| `agents/networks/actor.py` | Actor network (categorical policy) | 269 |
-| `agents/networks/critic.py` | Critic network (state value) | 250 |
-| `agents/buffers/replay_buffer.py` | Prioritized Experience Replay | 390 |
-| `agents/qrdqn_agent.py` | QR-DQN agent implementation | 505 |
-| `agents/categorical_sac_agent.py` | Categorical SAC agent | 596 |
-| `environments/position_trading_env.py` | Position-based trading env | 1,160 |
-| `test_phase5_agents.py` | Unit tests for Phase 5 | 318 |
+| File | Purpose |
+|------|---------|
+| `train.py` | Main training script |
+| `evaluate.py` | Evaluation script |
+| `config/config.py` | All hyperparameters |
+| `environments/position_trading_env.py` | Trading environment |
+| `agents/qrdqn_agent.py` | QR-DQN implementation |
+| `agents/categorical_sac_agent.py` | SAC implementation |
 
 ---
 
-## Testing Quick Commands
+## Architecture
 
-```bash
-# Test Actor Network
-PYTHONPATH=.:$PYTHONPATH python agents/networks/actor.py
+### Trading Environment (PositionTradingEnv)
+- **State**: (12 timesteps, 21 features) normalized [0,1]
+- **Actions**: LONG(0), SHORT(1), FLAT(2)
+- **Positions**: LONG(+1), SHORT(-1), FLAT(0)
+- **Risk**: 2% per trade, 10x leverage, 2% SL, 4% TP
 
-# Test Critic Network
-PYTHONPATH=.:$PYTHONPATH python agents/networks/critic.py
+### QR-DQN Agent
+- Conv1D(21→32) → FC(256) → FC(256) → Quantile head (51 × 3)
+- Epsilon-greedy exploration: 1.0 → 0.01 over 500K steps
+- Target network hard update every 2000 steps
+- Prioritized replay buffer (500K capacity)
 
-# Test Trading Environment
-python -c "
-from environments.position_trading_env import create_position_trading_env
-env = create_position_trading_env('data/datasets/BTC_processed.csv')
-obs, info = env.reset()
-print(f'Obs: {obs.shape}, Balance: \${info[\"balance\"]:,.2f}')
-"
-```
-
----
-
-## Git Status
-
-```
-Branch: main (up to date with origin/main)
-Last Commit: docs(continuation): update for Phase 4 completion
-Merged Branches:
-  phase1-project-setup
-  phase2-preprocessing
-  phase3-environment
-  phase4-neural-networks
-
-Ready to create: phase5-rl-agents
-```
+### Categorical SAC Agent
+- Actor: Conv1D → FC → Softmax policy
+- Twin Q-networks for critic
+- Entropy temperature auto-tuning
+- Soft target updates (τ=0.005)
 
 ---
 
-## Configuration Highlights
+## Recent Changes
 
-### QR-DQN Hyperparameters (Draft)
-```python
-QR_DQN_PARAMS = {
-    'learning_rate': 0.0005,
-    'gamma': 0.99,
-    'num_quantiles': 51,
-    'batch_size': 128,
-    'target_update_interval': 2000,
-    'huber_kappa': 1.0,
-    'replay_buffer_size': 500_000,
-    'priority_alpha': 0.6,
-    'priority_beta_start': 0.4,
-    'priority_beta_frames': 500_000,
-}
-```
-
-### Categorical SAC Hyperparameters (Draft)
-```python
-CATEGORICAL_SAC_PARAMS = {
-    'learning_rate': 0.0005,
-    'gamma': 0.99,
-    'tau': 0.005,
-    'batch_size': 256,
-    'entropy_target': -1.0,
-    'alpha_init': 0.2,
-    'replay_buffer_size': 500_000,
-    'target_update_interval': 1,
-}
-```
-
-### Trading Parameters (Already Configured)
-```python
-INITIAL_CAPITAL = 10000.0    # Starting balance
-RISK_PER_TRADE = 0.02        # Risk 2% per trade
-LEVERAGE = 10                # 10x leverage
-STOP_LOSS = 0.02             # 2% stop-loss
-TAKE_PROFIT = 0.04           # 4% take-profit
-```
+### 2025-11-28
+- Removed Smurf mechanism (not needed with SL/TP)
+- Added progress bars (tqdm) to training
+- Changed checkpoint naming: `{agent}_{crypto}_best.pt`, `{agent}_{crypto}_last.pt`
+- Fixed feature channel mismatch (28 → 21)
+- Fixed `evaluate.py` data loading
 
 ---
 
-## Architecture Summary
+## Next Steps (Phase 7)
 
-### Neural Networks
-```
-ActorNetwork  (151,459 params)
-  Conv1D(28→32) → FC(320→256) → FC(256→256) → FC(256→3) → Softmax
-  Input: (batch, 12, 28)
-  Output: [P(LONG), P(SHORT), P(FLAT)]
+1. **Visualization**
+   - Equity curve plotting
+   - Drawdown visualization
+   - Trade analysis charts
 
-CriticNetwork (150,945 params)
-  Conv1D(28→32) → FC(320→256) → FC(256→256) → FC(256→1)
-  Input: (batch, 12, 28)
-  Output: V(s) - state value
-```
+2. **Backtesting**
+   - Walk-forward testing
+   - Out-of-sample evaluation
 
-### Environment
-```
-PositionTradingEnv (Gymnasium)
-  Observation: Box(0, 1, (12, 28), float32)
-  Action: Discrete(3) - LONG(0), SHORT(1), FLAT(2)
-
-Features:
-  - Position tracking (LONG/SHORT/FLAT)
-  - Capital management ($10K initial, 2% risk, 10x leverage)
-  - Auto SL/TP triggers
-  - Funding fees every 8 hours
-  - Random slippage
-  - Drawdown penalty
-```
+3. **Hyperparameter Tuning**
+   - Optuna integration
+   - Learning rate scheduling
 
 ---
 
-## For New AI Agent/Developer
+## Supported Cryptocurrencies
 
-### Read First (Priority Order)
-1. **This file** - Quick project status
-2. `README.md` - Full user guide (now includes Phase 5)
-3. `CONTINUATION.md` - Detailed continuation guide
-4. `config/config.py` - All hyperparameters (centralized)
-5. `IMPLEMENTATION_PLAN.md` - Phase-by-phase roadmap
-
-### Key Concepts to Understand
-- **Position-based actions**: LONG(+1), SHORT(-1), FLAT(0) enable easy P&L math
-- **Instant flips**: LONG→SHORT happens in one step (close + open opposite)
-- **Funding fees**: Charged every 8 hours on futures positions (long vs short)
-- **28 features**: 21 active + 7 reserved (log returns, technicals, regime, funding)
-- **Distributional learning**: QR-DQN maintains Q-value distribution via quantiles
-- **Entropy-regularized policy**: SAC balances exploration (entropy) with exploitation
-- **Prioritized Replay**: Samples important transitions more frequently
-- **Soft updates**: SAC uses gradual network updates (tau=0.005)
-
-### Understanding the Agents
-
-**QR-DQN (Value-Based):**
-```python
-# Good for: Efficient policy evaluation, distributional info
-# Updates: Hard target updates every 2000 steps
-# Exploration: Epsilon-greedy (1.0 → 0.01 over time)
-# Loss: Quantile Huber loss with tau-weighted importance
-agent = QRDQNAgent()
-```
-
-**Categorical SAC (Policy-Based):**
-```python
-# Good for: Stable learning, exploration-exploitation balance
-# Updates: Soft target updates every step (tau=0.005)
-# Exploration: Entropy temperature auto-tuning (target entropy -1.0)
-# Loss: Actor + Twin Q + Alpha (entropy coefficient)
-agent = CategoricalSACAgent()
-```
-
-### Success Checklist for Phase 6
-- [ ] Read Phase 5 documentation (README + PROJECT_STATUS)
-- [ ] Run test_phase5_agents.py to verify agents work
-- [ ] Review config.py to understand all parameters
-- [ ] Create phase6-training branch
-- [ ] Implement train.py (main training loop)
-- [ ] Implement evaluate.py (test set evaluation)
-- [ ] Test training on small dataset
-- [ ] Commit with clear messages
-- [ ] Merge to main when complete
+| Crypto | Symbol | Data Available From |
+|--------|--------|---------------------|
+| BTC | BTC/USDT | 2019 |
+| ETH | ETH/USDT | 2019 |
+| XRP | XRP/USDT | 2020 |
+| SOL | SOL/USDT | 2021 |
+| BNB | BNB/USDT | 2020 |
+| TRX | TRX/USDT | 2021 |
+| DOGE | DOGE/USDT | 2021 |
 
 ---
 
-**Status:** Phase 5 Complete, Ready for Phase 6
-**Blockers:** None
-**Dependencies:** All Phase 1-5 complete and tested
-**Next Action:** Create `phase6-training` branch and implement training scripts
+## Checkpoints
 
----
+Training creates checkpoints in `checkpoints/`:
+```
+checkpoints/
+├── qrdqn_BTC_best.pt    # Best QR-DQN model for BTC
+├── qrdqn_BTC_last.pt    # Last QR-DQN model for BTC
+├── sac_ETH_best.pt      # Best SAC model for ETH
+└── sac_ETH_last.pt      # Last SAC model for ETH
+```
 
-*For detailed information, see README.md (Phase 5 section) or CONTINUATION.md*
+Best model is saved when `mean_return` increases (higher = better).

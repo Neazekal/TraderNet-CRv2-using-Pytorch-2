@@ -3,9 +3,9 @@ Trading Environment Module.
 
 Implements a Gymnasium-compatible trading environment for cryptocurrency trading
 using reinforcement learning. The environment simulates trading with:
-- State: Sliding window of technical features (12 timesteps x 19 features)
+- State: Sliding window of technical features (12 timesteps x 21 features)
 - Actions: BUY (0), SELL (1), HOLD (2)
-- Rewards: Based on future price movements (MarketLimitOrder or Smurf)
+- Rewards: Based on future price movements (MarketLimitOrder)
 """
 
 import gymnasium as gym
@@ -255,7 +255,6 @@ class TradingEnv(gym.Env):
 
 def create_trading_env(
     processed_csv_path: str,
-    reward_type: str = 'market_limit',
     **kwargs
 ) -> TradingEnv:
     """
@@ -263,14 +262,12 @@ def create_trading_env(
     
     Args:
         processed_csv_path: Path to processed dataset CSV
-        reward_type: 'market_limit' or 'smurf'
         **kwargs: Additional arguments passed to TradingEnv
         
     Returns:
         Configured TradingEnv instance
     """
     from data.datasets.utils import load_processed_dataset, create_sequences, get_price_data
-    from environments.rewards.smurf import SmurfReward
     
     # Load data
     df = load_processed_dataset(processed_csv_path)
@@ -280,24 +277,13 @@ def create_trading_env(
     highs, lows, closes = get_price_data(df, SEQUENCE_LENGTH)
     
     # Create reward function
-    if reward_type == 'market_limit':
-        reward_fn = MarketLimitOrderReward(
-            highs=highs,
-            lows=lows,
-            closes=closes,
-            horizon=kwargs.get('horizon', HORIZON),
-            fees=kwargs.get('fees', FEES)
-        )
-    elif reward_type == 'smurf':
-        reward_fn = SmurfReward(
-            highs=highs,
-            lows=lows,
-            closes=closes,
-            horizon=kwargs.get('horizon', HORIZON),
-            fees=kwargs.get('fees', FEES)
-        )
-    else:
-        raise ValueError(f"Unknown reward_type: {reward_type}")
+    reward_fn = MarketLimitOrderReward(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        horizon=kwargs.get('horizon', HORIZON),
+        fees=kwargs.get('fees', FEES)
+    )
     
     return TradingEnv(
         sequences=sequences,

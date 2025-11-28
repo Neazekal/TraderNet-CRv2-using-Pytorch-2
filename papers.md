@@ -1,5 +1,7 @@
 # Combining deep reinforcement learning with technical analysis and trend monitoring on cryptocurrency markets
 
+> **Note:** This is a summary of the original paper. In this PyTorch implementation, the **Smurf mechanism is NOT implemented** as the position-based trading environment with SL/TP, drawdown penalties, and the FLAT action already provides sufficient risk management.
+
 **Authors:** Vasileios Kochliaridis, Eleftherios Kouloumpris, Ioannis Vlahavas  
 **Journal:** Neural Computing and Applications (2023) 35:21445–21462  
 **Received:** 30 December 2022 / **Accepted:** 21 March 2023 / **Published online:** 20 April 2023  

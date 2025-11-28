@@ -45,16 +45,7 @@ of volume flow rather than absolute values.
 
 ---
 
-## 1. Smurf Parameters
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| **Hold reward (w)** | `0.0055` | Paper only said "w << 1" |
-| **Fee multiplier (f')** | Not explicitly different | Uses same fee structure, conservative behavior from hold reward |
-
----
-
-## 2. Feature Engineering Details
+## 1. Feature Engineering Details
 
 ### Full Feature List (21 features):
 ```python

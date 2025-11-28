@@ -16,8 +16,11 @@ import numpy as np
 from pathlib import Path
 from typing import Optional, Dict
 
-from config.config import SUPPORTED_CRYPTOS, DATA_LOADING_PARAMS, EVALUATION_PARAMS, METRICS_PARAMS
-from data.datasets.utils import train_eval_split
+from config.config import (
+    SUPPORTED_CRYPTOS, DATA_LOADING_PARAMS, EVALUATION_PARAMS, METRICS_PARAMS,
+    SEQUENCE_LENGTH, FEATURES,
+)
+from data.datasets.utils import prepare_training_data
 from environments.position_trading_env import PositionTradingEnv
 from agents.qrdqn_agent import QRDQNAgent
 from agents.categorical_sac_agent import CategoricalSACAgent
@@ -83,15 +86,15 @@ def load_agent(checkpoint_path: str, agent_type: str, device: torch.device):
     return agent
 
 
-def load_eval_data(crypto: str) -> pd.DataFrame:
+def load_eval_data(crypto: str) -> dict:
     """
-    Load evaluation dataset.
+    Load evaluation dataset with sequences and prices.
 
     Args:
         crypto: Cryptocurrency symbol
 
     Returns:
-        Evaluation dataset
+        Dictionary with eval sequences, highs, lows, closes, df
     """
     dataset_path = Path(f"data/datasets/{crypto}_processed.csv")
 
@@ -99,17 +102,13 @@ def load_eval_data(crypto: str) -> pd.DataFrame:
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
 
     print(f"Loading dataset: {dataset_path}")
-    df = pd.read_csv(dataset_path)
+    
+    # Use prepare_training_data to get properly formatted data
+    data = prepare_training_data(str(dataset_path))
+    
+    print(f"Evaluation dataset: {len(data['eval']['sequences'])} samples")
 
-    # Use last (1 - train_ratio) for evaluation
-    _, eval_data = train_eval_split(
-        df,
-        train_ratio=DATA_LOADING_PARAMS['train_ratio'],
-        shuffle=DATA_LOADING_PARAMS['shuffle']
-    )
-    print(f"Evaluation dataset: {len(eval_data)} samples")
-
-    return eval_data
+    return data['eval']
 
 
 def evaluate_agent(
@@ -323,8 +322,19 @@ def main():
     print(f"\nLoading {args.crypto} evaluation data...")
     eval_data = load_eval_data(args.crypto)
 
+    # Get funding rates if available
+    eval_funding = None
+    if 'funding_rate' in eval_data['df'].columns:
+        eval_funding = eval_data['df']['funding_rate'].values[SEQUENCE_LENGTH-1:].astype(np.float32)
+
     # Create evaluation environment
-    eval_env = PositionTradingEnv(data=eval_data)
+    eval_env = PositionTradingEnv(
+        sequences=eval_data['sequences'],
+        highs=eval_data['highs'],
+        lows=eval_data['lows'],
+        closes=eval_data['closes'],
+        funding_rates=eval_funding,
+    )
 
     # Evaluate
     print(f"\n{'='*70}")
