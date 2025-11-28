@@ -18,6 +18,7 @@ from typing import Optional, Dict
 
 from config.config import (
     SUPPORTED_CRYPTOS, TRAINING_PARAMS, CHECKPOINT_PARAMS, LOGGING_PARAMS,
+    DATA_LOADING_PARAMS, METRICS_PARAMS, EVALUATION_PARAMS,
     QR_DQN_PARAMS, CATEGORICAL_SAC_PARAMS, NUM_ACTIONS, OBS_SHAPE,
 )
 from data.datasets.builder import DatasetBuilder
@@ -53,7 +54,11 @@ def load_dataset(crypto: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     print(f"Loaded {len(df)} samples")
 
     # Split into train and eval
-    train_data, eval_data = train_eval_split(df, train_ratio=0.95)
+    train_data, eval_data = train_eval_split(
+        df,
+        train_ratio=DATA_LOADING_PARAMS['train_ratio'],
+        shuffle=DATA_LOADING_PARAMS['shuffle']
+    )
     print(f"Train: {len(train_data)} samples, Eval: {len(eval_data)} samples")
 
     return train_data, eval_data

@@ -257,13 +257,37 @@ CHECKPOINT_PARAMS = {
     'keep_n_best': 3,               # Keep top N checkpoints
     'metric_name': 'mean_return',   # Metric to optimize
     'mode': 'max',                  # 'max' or 'min'
+    'save_interval': 50_000,        # Save checkpoint every N steps
 }
 
 # Logging settings (Phase 6)
 LOGGING_PARAMS = {
     'log_dir': 'logs/',
+    'checkpoint_dir': 'checkpoints/',
     'use_tensorboard': False,       # Enable Tensorboard logging
     'console_log_freq': 100,        # Console output frequency
+    'save_interval': 100,           # Epochs between saving logs
+}
+
+# Data loading settings (Phase 6)
+DATA_LOADING_PARAMS = {
+    'train_ratio': 0.95,            # Train/eval split ratio
+    'shuffle': False,               # Shuffle data before splitting
+    'normalize': True,              # Normalize features
+}
+
+# Metrics settings (Phase 6)
+METRICS_PARAMS = {
+    'risk_free_rate': 0.0,          # Annual risk-free rate (0%)
+    'periods_per_year': 252,        # For daily returns; use 8760 for hourly
+    'initial_capital': 10000.0,     # Starting capital for equity tracking
+}
+
+# Evaluation settings (Phase 6)
+EVALUATION_PARAMS = {
+    'num_episodes': 5,              # Episodes per evaluation
+    'deterministic': True,          # Use greedy policy for evaluation
+    'seed': TRAINING_PARAMS['seed'], # Random seed for reproducibility
 }
 
 # =============================================================================

@@ -15,18 +15,22 @@ Metrics computed:
 import numpy as np
 from typing import Dict, List, Optional
 
+from config.config import METRICS_PARAMS
+
 
 class TradingMetrics:
     """Calculate and track trading performance metrics."""
 
-    def __init__(self, risk_free_rate: float = 0.0):
+    def __init__(self, risk_free_rate: float = None):
         """
         Initialize metrics tracker.
 
         Args:
             risk_free_rate: Annual risk-free rate for Sharpe/Sortino calculation
+                           (default: from METRICS_PARAMS)
         """
-        self.risk_free_rate = risk_free_rate
+        self.risk_free_rate = risk_free_rate if risk_free_rate is not None else METRICS_PARAMS['risk_free_rate']
+        self.periods_per_year = METRICS_PARAMS['periods_per_year']
         self.reset()
 
     def reset(self):
@@ -92,10 +96,11 @@ class TradingMetrics:
         # Sharpe Ratio
         if len(self.all_returns) > 1:
             returns_array = np.array(self.all_returns)
-            excess_returns = returns_array - (self.risk_free_rate / 252)  # Daily risk-free rate
+            daily_rf = self.risk_free_rate / self.periods_per_year
+            excess_returns = returns_array - daily_rf
 
             if np.std(excess_returns) > 0:
-                sharpe = np.mean(excess_returns) / np.std(excess_returns) * np.sqrt(252)
+                sharpe = np.mean(excess_returns) / np.std(excess_returns) * np.sqrt(self.periods_per_year)
                 metrics['sharpe_ratio'] = float(sharpe)
             else:
                 metrics['sharpe_ratio'] = 0.0
@@ -105,12 +110,13 @@ class TradingMetrics:
         # Sortino Ratio (only downside volatility)
         if len(self.all_returns) > 1:
             returns_array = np.array(self.all_returns)
-            excess_returns = returns_array - (self.risk_free_rate / 252)
+            daily_rf = self.risk_free_rate / self.periods_per_year
+            excess_returns = returns_array - daily_rf
             downside_returns = np.minimum(excess_returns, 0)
 
             downside_std = np.sqrt(np.mean(downside_returns ** 2))
             if downside_std > 0:
-                sortino = np.mean(excess_returns) / downside_std * np.sqrt(252)
+                sortino = np.mean(excess_returns) / downside_std * np.sqrt(self.periods_per_year)
                 metrics['sortino_ratio'] = float(sortino)
             else:
                 metrics['sortino_ratio'] = 0.0

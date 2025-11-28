@@ -16,7 +16,7 @@ import numpy as np
 from pathlib import Path
 from typing import Optional, Dict
 
-from config.config import SUPPORTED_CRYPTOS
+from config.config import SUPPORTED_CRYPTOS, DATA_LOADING_PARAMS, EVALUATION_PARAMS, METRICS_PARAMS
 from data.datasets.utils import train_eval_split
 from environments.position_trading_env import PositionTradingEnv
 from agents.qrdqn_agent import QRDQNAgent
@@ -101,8 +101,12 @@ def load_eval_data(crypto: str) -> pd.DataFrame:
     print(f"Loading dataset: {dataset_path}")
     df = pd.read_csv(dataset_path)
 
-    # Use last 5% for evaluation
-    _, eval_data = train_eval_split(df, train_ratio=0.95)
+    # Use last (1 - train_ratio) for evaluation
+    _, eval_data = train_eval_split(
+        df,
+        train_ratio=DATA_LOADING_PARAMS['train_ratio'],
+        shuffle=DATA_LOADING_PARAMS['shuffle']
+    )
     print(f"Evaluation dataset: {len(eval_data)} samples")
 
     return eval_data

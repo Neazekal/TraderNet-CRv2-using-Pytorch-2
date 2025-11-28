@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Dict, Optional
 from dataclasses import dataclass
 
+from config.config import CHECKPOINT_PARAMS, LOGGING_PARAMS
+
 
 @dataclass
 class CheckpointInfo:
@@ -29,20 +31,29 @@ class CheckpointManager:
 
     def __init__(
         self,
-        checkpoint_dir: str = "checkpoints",
-        metric_name: str = "eval_return",
-        mode: str = "max",
-        keep_n_best: int = 3,
+        checkpoint_dir: str = None,
+        metric_name: str = None,
+        mode: str = None,
+        keep_n_best: int = None,
     ):
         """
         Initialize checkpoint manager.
 
         Args:
-            checkpoint_dir: Directory to save checkpoints
-            metric_name: Name of metric to optimize
-            mode: 'max' to maximize metric, 'min' to minimize
-            keep_n_best: Number of best checkpoints to keep
+            checkpoint_dir: Directory to save checkpoints (default: from CHECKPOINT_PARAMS)
+            metric_name: Name of metric to optimize (default: from CHECKPOINT_PARAMS)
+            mode: 'max' to maximize metric, 'min' to minimize (default: from CHECKPOINT_PARAMS)
+            keep_n_best: Number of best checkpoints to keep (default: from CHECKPOINT_PARAMS)
         """
+        if checkpoint_dir is None:
+            checkpoint_dir = LOGGING_PARAMS.get('checkpoint_dir', 'checkpoints')
+        if metric_name is None:
+            metric_name = CHECKPOINT_PARAMS.get('metric_name', 'mean_return')
+        if mode is None:
+            mode = CHECKPOINT_PARAMS.get('mode', 'max')
+        if keep_n_best is None:
+            keep_n_best = CHECKPOINT_PARAMS.get('keep_n_best', 3)
+
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 

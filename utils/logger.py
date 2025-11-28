@@ -13,18 +13,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, List
 
+from config.config import LOGGING_PARAMS
+
 
 class TrainingLogger:
     """Logger for tracking training progress and metrics."""
 
-    def __init__(self, log_dir: str = "logs", experiment_name: Optional[str] = None):
+    def __init__(self, log_dir: str = None, experiment_name: Optional[str] = None):
         """
         Initialize training logger.
 
         Args:
-            log_dir: Directory to save logs
+            log_dir: Directory to save logs (default: from LOGGING_PARAMS)
             experiment_name: Name of the experiment (for file naming)
         """
+        if log_dir is None:
+            log_dir = LOGGING_PARAMS['log_dir']
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
