@@ -216,7 +216,11 @@ class DatasetBuilder:
         
         # Save scaler
         if save_scaler and self.scaler is not None:
-            scaler_path = path.with_suffix('.scaler.pkl')
+            # Save to data/scalers/ folder instead of data/datasets/
+            scaler_folder = Path(filepath).parent.parent / 'scalers'
+            scaler_folder.mkdir(parents=True, exist_ok=True)
+            scaler_filename = Path(filepath).stem + '.scaler.pkl'
+            scaler_path = scaler_folder / scaler_filename
             with open(scaler_path, 'wb') as f:
                 pickle.dump(self.scaler, f)
             print(f"Saved scaler to {scaler_path}")
@@ -237,7 +241,10 @@ class DatasetBuilder:
         print(f"Loaded dataset from {filepath}: {self.data.shape}")
         
         if load_scaler:
-            scaler_path = Path(filepath).with_suffix('.scaler.pkl')
+            # Load from data/scalers/ folder instead of data/datasets/
+            scaler_folder = Path(filepath).parent.parent / 'scalers'
+            scaler_filename = Path(filepath).stem + '.scaler.pkl'
+            scaler_path = scaler_folder / scaler_filename
             if scaler_path.exists():
                 with open(scaler_path, 'rb') as f:
                     self.scaler = pickle.load(f)
