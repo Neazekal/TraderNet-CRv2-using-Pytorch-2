@@ -1,10 +1,23 @@
-torch>=2.0
-gymnasium
-ccxt
-ta
-pandas
-numpy
-scikit-learn
-matplotlib
-tqdm
-python-dotenv
+# Deep Learning
+torch>=2.0.0
+
+# Reinforcement Learning
+gymnasium>=0.29.0
+
+# Data & Analysis
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+
+# Technical Analysis
+ta>=0.10.0
+
+# Data Download
+ccxt>=4.0.0
+
+# Visualization
+matplotlib>=3.7.0
+
+# Utilities
+tqdm>=4.65.0
+python-dotenv>=1.0.0
