@@ -78,8 +78,20 @@ def load_agent(checkpoint_path: str, agent_type: str, device: torch.device):
 
     checkpoint = torch.load(checkpoint_path, weights_only=False)
 
-    if checkpoint['agent_state'] is not None:
-        agent.load_state_dict(checkpoint['agent_state'])
+    # Load weights based on agent type (train.py saves with different keys)
+    if agent_type.lower() == 'qrdqn':
+        agent.q_network.load_state_dict(checkpoint['agent_state'])
+        agent.target_q_network.load_state_dict(checkpoint['target_state'])
+        if 'optimizer_state' in checkpoint:
+            agent.optimizer.load_state_dict(checkpoint['optimizer_state'])
+    else:  # sac
+        agent.actor.load_state_dict(checkpoint['actor_state'])
+        agent.q1_network.load_state_dict(checkpoint['q1_state'])
+        agent.q2_network.load_state_dict(checkpoint['q2_state'])
+        agent.target_q1_network.load_state_dict(checkpoint['target_q1_state'])
+        agent.target_q2_network.load_state_dict(checkpoint['target_q2_state'])
+        if 'log_alpha' in checkpoint:
+            agent.log_alpha.data = checkpoint['log_alpha']
 
     print(f"Agent loaded successfully (step: {checkpoint['step']})")
 

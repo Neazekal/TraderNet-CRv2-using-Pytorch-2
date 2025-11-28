@@ -513,6 +513,10 @@ class PositionTradingEnv(gym.Env):
         if terminated and self.position != self.FLAT:
             final_price = self.closes[min(self.current_step, len(self.closes) - 1)]
             final_reward, final_pnl_dollars = self._close_position(final_price, self.EXIT_END_EPISODE)
+            reward += final_reward  # Add to returned reward so agent sees it
+            pnl_dollars += final_pnl_dollars
+            trade_closed = True
+            exit_reason = self.EXIT_END_EPISODE
             self.total_reward += final_reward
         
         # Get next observation

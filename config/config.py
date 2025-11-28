@@ -168,10 +168,14 @@ FUNDING_FEE_ENABLED = True              # Apply funding fees when holding positi
 # =============================================================================
 # Drawdown Penalty Settings
 # Penalizes agent when equity falls below peak (encourages capital preservation)
+# NOTE: Penalty is applied every step, so values must be small relative to trade rewards
+# Typical trade reward: ~0.002-0.02 (log return)
+# Episode length: ~2000-50000 steps
+# Keep total drawdown penalty comparable to total trade P&L
 DRAWDOWN_PENALTY_ENABLED = True
 DRAWDOWN_PENALTY_THRESHOLD = 0.05   # Start penalizing at 5% drawdown
-DRAWDOWN_PENALTY_SCALE = 0.5        # Penalty multiplier (higher = more penalty)
-DRAWDOWN_PENALTY_MAX = 0.1          # Maximum penalty per step
+DRAWDOWN_PENALTY_SCALE = 0.01       # Penalty multiplier (was 0.5 - too high!)
+DRAWDOWN_PENALTY_MAX = 0.001        # Maximum penalty per step (was 0.1 - too high!)
 
 # =============================================================================
 # QR-DQN Hyperparameters

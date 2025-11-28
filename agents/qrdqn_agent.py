@@ -424,7 +424,6 @@ class QuantileQNetworkBackbone(nn.Module):
 
         # Weight initialization
         self._init_weights()
-        self._init_weights()
 
     def _init_weights(self):
         """Initialize network weights."""
