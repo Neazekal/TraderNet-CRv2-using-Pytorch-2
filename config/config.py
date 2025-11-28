@@ -194,6 +194,9 @@ QR_DQN_PARAMS = {
     'priority_alpha': 0.6,
     'priority_beta_start': 0.4,
     'priority_beta_frames': 500_000,
+    'epsilon_start': 1.0,           # Initial exploration rate
+    'epsilon_end': 0.01,            # Final exploration rate
+    'epsilon_decay_frames': 500_000, # Frames to decay epsilon
 }
 
 # =============================================================================
@@ -225,6 +228,15 @@ NETWORK_PARAMS = {
 NETWORK_INIT_PARAMS = {
     'value_head_init_range': 0.03,      # Uniform init range for critic output layer [-x, +x]
     'log_prob_epsilon': 1e-8,           # Epsilon for numerical stability in log probability
+}
+
+# =============================================================================
+# Agent Training Settings (Gradient Clipping, Numerical Stability)
+# =============================================================================
+AGENT_TRAINING_PARAMS = {
+    'gradient_clip_norm': 10.0,         # Max norm for gradient clipping (all agents)
+    'td_error_epsilon': 1e-6,           # Epsilon for numerical stability in TD errors
+    'log_epsilon': 1e-8,                # Epsilon for log operations to avoid log(0)
 }
 
 # =============================================================================

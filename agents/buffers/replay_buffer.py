@@ -16,6 +16,8 @@ import torch
 from typing import Tuple, Dict, Optional
 from collections import deque
 
+from config.config import AGENT_TRAINING_PARAMS
+
 
 class SumTree:
     """
@@ -297,7 +299,8 @@ class ReplayBuffer:
             td_errors: TD error magnitudes (higher = more important)
         """
         # Clip TD errors for numerical stability
-        td_errors = np.abs(td_errors) + 1e-6
+        td_error_epsilon = AGENT_TRAINING_PARAMS['td_error_epsilon']
+        td_errors = np.abs(td_errors) + td_error_epsilon
 
         # Update priorities with alpha weighting
         for idx, td_error in zip(indices, td_errors):

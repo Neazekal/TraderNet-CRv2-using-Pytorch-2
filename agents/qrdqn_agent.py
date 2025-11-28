@@ -29,6 +29,7 @@ from config.config import (
     NUM_ACTIONS,
     OBS_SHAPE,
     ACTION_NAMES,
+    AGENT_TRAINING_PARAMS,
 )
 from agents.networks.actor import ActorNetwork
 from agents.networks.critic import CriticNetwork
@@ -199,7 +200,8 @@ class QRDQNAgent:
         # Backward pass
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=10.0)
+        grad_clip_norm = AGENT_TRAINING_PARAMS['gradient_clip_norm']
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=grad_clip_norm)
         self.optimizer.step()
 
         # Update priorities in replay buffer

@@ -29,6 +29,7 @@ from config.config import (
     NUM_ACTIONS,
     OBS_SHAPE,
     ACTION_NAMES,
+    AGENT_TRAINING_PARAMS,
 )
 from agents.networks.actor import ActorNetwork
 from agents.networks.critic import CriticNetwork
@@ -281,7 +282,8 @@ class CategoricalSACAgent:
             next_q_min = torch.min(next_q1, next_q2)  # (batch, num_actions)
 
             # Entropy regularized value: V(s') = E_a[Q(s',a) - alpha * log pi(a|s')]
-            next_log_probs = torch.log(next_action_probs + 1e-8)  # (batch, num_actions)
+            log_eps = AGENT_TRAINING_PARAMS['log_epsilon']
+            next_log_probs = torch.log(next_action_probs + log_eps)  # (batch, num_actions)
             alpha = self.log_alpha.exp()
             next_value = (next_action_probs * (next_q_min - alpha * next_log_probs)).sum(dim=1)  # (batch,)
 
@@ -299,13 +301,14 @@ class CategoricalSACAgent:
         # Update Q1
         self.q1_optimizer.zero_grad()
         q1_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.q1_network.parameters(), max_norm=10.0)
+        grad_clip_norm = AGENT_TRAINING_PARAMS['gradient_clip_norm']
+        torch.nn.utils.clip_grad_norm_(self.q1_network.parameters(), max_norm=grad_clip_norm)
         self.q1_optimizer.step()
 
         # Update Q2
         self.q2_optimizer.zero_grad()
         q2_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.q2_network.parameters(), max_norm=10.0)
+        torch.nn.utils.clip_grad_norm_(self.q2_network.parameters(), max_norm=grad_clip_norm)
         self.q2_optimizer.step()
 
         # Compute TD errors for priority update
@@ -329,7 +332,8 @@ class CategoricalSACAgent:
 
         # Get policy
         action_probs = self.actor(states)  # (batch, num_actions)
-        log_action_probs = torch.log(action_probs + 1e-8)
+        log_eps = AGENT_TRAINING_PARAMS['log_epsilon']
+        log_action_probs = torch.log(action_probs + log_eps)
 
         # Get Q-values
         q1_values = self.q1_network(states)
@@ -349,7 +353,8 @@ class CategoricalSACAgent:
         # Update actor
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=10.0)
+        grad_clip_norm = AGENT_TRAINING_PARAMS['gradient_clip_norm']
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=grad_clip_norm)
         self.actor_optimizer.step()
 
         return actor_loss, entropy
