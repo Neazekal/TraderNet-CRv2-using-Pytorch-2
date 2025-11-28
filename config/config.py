@@ -184,7 +184,7 @@ QR_DQN_PARAMS = {
     'learning_rate': 0.0005,
     'gamma': 0.99,                  # Discount factor
     'num_quantiles': 51,
-    'batch_size': 128,
+    'batch_size': 1024,             # Optimized for multi-GPU (T4: 1024-2048)
     'target_update_interval': 2000,
     'huber_kappa': 1.0,
     'replay_buffer_size': 500_000,
@@ -203,7 +203,7 @@ CATEGORICAL_SAC_PARAMS = {
     'learning_rate': 0.0005,
     'gamma': 0.99,                  # Discount factor
     'tau': 0.005,                   # Target smoothing coefficient
-    'batch_size': 256,
+    'batch_size': 2048,             # Optimized for multi-GPU (T4: 2048-4096)
     'entropy_target': -1.0,         # Target entropy for temperature tuning
     'alpha_init': 0.2,              # Initial entropy temperature
     'replay_buffer_size': 500_000,
