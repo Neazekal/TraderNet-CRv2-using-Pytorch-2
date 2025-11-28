@@ -1,192 +1,583 @@
 # Project Continuation Guide
 
-**Last Updated:** 2025-11-27  
-**Current Phase:** Phase 3 Complete, Ready for Phase 4
+**Last Updated:** 2025-11-28
+**Current Phase:** Phase 4 Complete, Ready for Phase 5
+**Project:** TraderNet-CRv2 PyTorch - Deep RL Cryptocurrency Trading System
 
 ---
 
-## Current Status
+## 🎯 Project Overview
 
-### Completed Phases
+A PyTorch implementation of TraderNet-CRv2 that combines Proximal Policy Optimization (PPO) with technical analysis for cryptocurrency futures trading. The system uses deep reinforcement learning to learn profitable trading strategies while managing risk through stop-loss, take-profit, and position sizing.
 
-| Phase | Status | Description |
-|-------|--------|-------------|
-| Phase 1 | COMPLETE | Data download (Binance Futures OHLCV + Funding Rate) |
-| Phase 2 | COMPLETE | Preprocessing (Technical indicators + Regime detection) |
-| Phase 3 | COMPLETE | Trading environment (Position-based with realistic features) |
+**Paper:** "Combining deep reinforcement learning with technical analysis and trend monitoring on cryptocurrency markets" (Neural Computing and Applications, 2023)
 
-### Next Phase: Phase 4 - Neural Networks
-
-Implement the Actor-Critic networks for PPO:
-
-1. **ActorNetwork** (`agents/networks/actor.py`)
-   - Input: (batch, 12, 21) - sequence of 12 timesteps with 21 features
-   - Conv1D(21, 32, kernel=3) -> Flatten -> FC(256) -> FC(256) -> FC(3) -> Softmax
-   - Output: Action probabilities for LONG/SHORT/FLAT
-
-2. **CriticNetwork** (`agents/networks/critic.py`)
-   - Same architecture but outputs single value (state value)
-   - Conv1D(21, 32, kernel=3) -> Flatten -> FC(256) -> FC(256) -> FC(1)
-
-3. **Key parameters** (from config.py):
-   ```python
-   NETWORK_PARAMS = {
-       'conv_filters': 32,
-       'conv_kernel': 3,
-       'fc_layers': [256, 256],
-       'activation': 'gelu',
-   }
-   ```
+**Original Repo:** [kochlisGit/TraderNet-CRv2](https://github.com/kochlisGit/TraderNet-CRv2) (TensorFlow)
 
 ---
 
-## Key Design Decisions Made
+## ✅ Current Status
 
-### 1. Action Space
-- **Decision:** 3 actions (LONG=0, SHORT=1, FLAT=2)
-- **Position values:** +1 (LONG), -1 (SHORT), 0 (FLAT)
-- **Reason:** Sign indicates market direction for easy P&L calculation
+### Completed Phases (4 of 7)
 
-### 2. Instant Position Flip
-- **Decision:** LONG->SHORT or SHORT->LONG happens in one step
-- **How:** Close current position, immediately open opposite
-- **Reason:** Faster reaction to market reversals vs waiting one step
+| Phase | Status | Lines of Code | Description |
+|-------|--------|---------------|-------------|
+| **Phase 1** | ✅ COMPLETE | ~1,500 | Data download (Binance Futures OHLCV + Funding Rate) |
+| **Phase 2** | ✅ COMPLETE | ~1,500 | Preprocessing (21 features: technical indicators + regime detection) |
+| **Phase 3** | ✅ COMPLETE | ~1,300 | Trading environment (Position-based with realistic costs) |
+| **Phase 4** | ✅ COMPLETE | ~529 | Neural Networks (Actor-Critic for PPO) |
+| **Phase 5** | ⏳ NEXT | TBD | PPO Agent (training algorithm) |
+| **Phase 6** | 📋 PLANNED | TBD | Training & Evaluation scripts |
+| **Phase 7** | 📋 PLANNED | TBD | Metrics & Visualization |
 
-### 3. No HMM for Regime Detection
-- **Decision:** Use simple rolling volatility + ADX instead
-- **Reason:** HMM requires more compute, rolling indicators are lightweight for live trading
-
-### 4. Single Timeframe
-- **Decision:** Only 1h timeframe (removed 4h, 1D)
-- **Reason:** Simplicity for initial implementation
-
-### 5. Futures Only
-- **Decision:** Use Binance Futures data, not Spot
-- **Reason:** Can SHORT, has funding rate data, matches real trading
-
-### 6. Funding Fee Simulation
-- **Decision:** Apply real funding fees every 8 hours (00:00, 08:00, 16:00 UTC)
-- **Reason:** Teaches agent cost of holding positions long-term
+**Total Implementation:** ~4,829 lines of production code
+**Documentation:** ~1,400+ lines
 
 ---
 
-## File Structure Summary
+## 🚀 Next Phase: Phase 5 - PPO Agent
 
-```
-Key files to understand:
-├── config/config.py           # ALL hyperparameters centralized here
-├── data/
-│   ├── downloaders/binance.py # Downloads OHLCV + funding from Binance Futures
-│   ├── preprocessing/
-│   │   ├── technical.py       # Computes 11 technical indicators
-│   │   └── regime.py          # Market regime detection (4 states)
-│   └── datasets/builder.py    # Builds final processed dataset
-├── environments/
-│   ├── trading_env.py         # Paper replication (single-step rewards)
-│   └── position_trading_env.py # MAIN ENV: realistic trading
-└── analysis/technical/
-    └── indicators_calc.py     # Individual indicator calculations
-```
+### What Needs to Be Built
 
----
+**1. Rollout Buffer** (`agents/buffers/rollout_buffer.py`)
+- Store experiences during environment interaction
+- Calculate returns and advantages using GAE (Generalized Advantage Estimation)
+- Support batch sampling for PPO training
 
-## Environment Features Summary
+**2. PPO Agent** (`agents/ppo_agent.py`)
+- Initialize Actor and Critic networks
+- Collect rollouts from environment
+- Compute PPO loss (clipped surrogate objective)
+- Update both networks using Adam optimizer
+- Support separate learning rates for actor/critic
 
-The `PositionTradingEnv` includes:
-- Capital management (balance, equity tracking)
-- Position sizing (risk_per_trade * leverage)
-- Stop-Loss / Take-Profit (auto-trigger)
-- Funding fee (8-hour intervals)
-- Random slippage (configurable mean/std)
-- Drawdown penalty (configurable threshold)
-- Instant position flip (LONG<->SHORT)
-- Transaction fees on open/close
-
----
-
-## How to Continue
-
-### For Phase 4 (Neural Networks):
+**3. Key Components to Implement:**
 
 ```python
-# Example actor network structure
-import torch
-import torch.nn as nn
-from config.config import NETWORK_PARAMS, OBS_SHAPE, NUM_ACTIONS
+class RolloutBuffer:
+    """Store experiences and compute advantages."""
+    def store(self, state, action, reward, done, value, log_prob)
+    def compute_returns_and_advantages(self, last_value, gamma, gae_lambda)
+    def get_batches(self, batch_size)
+    def clear()
 
-class ActorNetwork(nn.Module):
-    def __init__(self):
-        super().__init__()
-        # Conv1D: input shape (batch, seq_len=12, features=21)
-        # PyTorch Conv1d expects (batch, channels, seq_len)
-        # So need to transpose: (batch, 21, 12)
-        self.conv = nn.Conv1d(
-            in_channels=OBS_SHAPE[1],  # 21 features
-            out_channels=NETWORK_PARAMS['conv_filters'],  # 32
-            kernel_size=NETWORK_PARAMS['conv_kernel']  # 3
-        )
-        self.activation = nn.GELU()
-        
-        # After conv: (batch, 32, 12-3+1) = (batch, 32, 10)
-        flatten_size = 32 * 10
-        
-        self.fc1 = nn.Linear(flatten_size, NETWORK_PARAMS['fc_layers'][0])
-        self.fc2 = nn.Linear(NETWORK_PARAMS['fc_layers'][0], NETWORK_PARAMS['fc_layers'][1])
-        self.output = nn.Linear(NETWORK_PARAMS['fc_layers'][1], NUM_ACTIONS)
-        
-    def forward(self, x):
-        # x: (batch, 12, 21)
-        x = x.transpose(1, 2)  # (batch, 21, 12)
-        x = self.activation(self.conv(x))
-        x = x.flatten(1)
-        x = self.activation(self.fc1(x))
-        x = self.activation(self.fc2(x))
-        x = torch.softmax(self.output(x), dim=-1)
-        return x
+class PPOAgent:
+    """PPO training algorithm."""
+    def __init__(self, actor, critic, learning_rate, ...)
+    def collect_rollouts(self, env, num_steps)
+    def update_policy(self, rollout_buffer)
+    def train(self, env, total_timesteps)
+    def evaluate(self, env)
+    def save(self, path)
+    def load(self, path)
 ```
 
-### For Phase 5 (PPO):
+**4. PPO Hyperparameters** (already in `config/config.py`):
 
-Key hyperparameters in config.py:
 ```python
 PPO_PARAMS = {
-    'learning_rate': 0.0005,
-    'epsilon_clip': 0.3,
-    'gamma': 0.99,
-    'gae_lambda': 0.95,
-    'num_epochs': 40,
-    'batch_size': 128,
+    'learning_rate': 0.0005,      # Adam learning rate
+    'epsilon_clip': 0.3,          # PPO clipping parameter
+    'gamma': 0.99,                # Discount factor
+    'gae_lambda': 0.95,           # GAE lambda for advantage estimation
+    'num_epochs': 40,             # PPO update epochs per rollout
+    'batch_size': 128,            # Mini-batch size for updates
+    'value_loss_coef': 0.5,       # Value loss coefficient
+    'entropy_coef': 0.01,         # Entropy bonus coefficient
+    'max_grad_norm': 0.5,         # Gradient clipping
+}
+```
+
+**5. Training Settings** (already in `config/config.py`):
+
+```python
+TRAINING_PARAMS = {
+    'total_timesteps': 1_000_000,  # Total training steps
+    'eval_freq': 10_000,           # Evaluate every N steps
+    'save_freq': 50_000,           # Save checkpoint every N steps
+    'log_freq': 1000,              # Log metrics every N steps
+    'seed': 42,                    # Random seed
 }
 ```
 
 ---
 
-## Testing Commands
+## 📁 Current File Structure
 
-```bash
-# Test data download
-python -m data.downloaders.binance
-
-# Test preprocessing
-python -m data.datasets.builder
-
-# Test environment
-python -c "
-from environments.position_trading_env import create_position_trading_env
-env = create_position_trading_env('data/datasets/BTC_processed.csv')
-obs, info = env.reset()
-print(f'Obs shape: {obs.shape}')
-print(f'Balance: \${info[\"balance\"]:,.2f}')
-"
+```
+TraderNet-CRv2-using-Pytorch-2/
+├── config/
+│   └── config.py                    # ✅ All hyperparameters centralized
+│
+├── data/
+│   ├── downloaders/
+│   │   └── binance.py               # ✅ CCXT Binance Futures downloader
+│   ├── preprocessing/
+│   │   ├── ohlcv.py                 # ✅ Log returns & hour extraction
+│   │   ├── technical.py             # ✅ Derived technical features
+│   │   ├── regime.py                # ✅ Market regime detection (4 states)
+│   │   └── funding.py               # ✅ Funding rate processing
+│   └── datasets/
+│       ├── builder.py               # ✅ Complete preprocessing pipeline
+│       └── utils.py                 # ✅ Train/eval split utilities
+│
+├── analysis/
+│   └── technical/
+│       └── indicators_calc.py       # ✅ 11 technical indicators
+│
+├── environments/
+│   ├── trading_env.py               # ✅ Paper replication environment
+│   ├── position_trading_env.py      # ✅ MAIN ENV: Realistic trading
+│   └── rewards/
+│       ├── base.py                  # ✅ Base reward class
+│       ├── market_limit.py          # ✅ MarketLimitOrder reward
+│       └── smurf.py                 # ✅ Smurf conservative reward
+│
+├── agents/
+│   ├── __init__.py                  # ✅ Module exports
+│   ├── networks/
+│   │   ├── __init__.py              # ✅ Network exports
+│   │   ├── actor.py                 # ✅ ActorNetwork (151,459 params)
+│   │   └── critic.py                # ✅ CriticNetwork (150,945 params)
+│   ├── buffers/                     # ⏳ NEXT: Rollout buffer
+│   │   └── rollout_buffer.py        # ⏳ TODO: Experience storage + GAE
+│   └── ppo_agent.py                 # ⏳ NEXT: PPO training algorithm
+│
+├── metrics/                         # 📋 PLANNED: Trading metrics
+│   └── trading/
+│       ├── base.py                  # 📋 TODO: Base metric class
+│       ├── pnl.py                   # 📋 TODO: Cumulative returns
+│       ├── sharpe.py                # 📋 TODO: Sharpe ratio
+│       ├── sortino.py               # 📋 TODO: Sortino ratio
+│       └── drawdown.py              # 📋 TODO: Maximum drawdown
+│
+├── checkpoints/                     # Model checkpoints (gitignored)
+├── logs/                            # Training logs (gitignored)
+├── data/storage/                    # Raw CSV data (gitignored)
+├── data/datasets/                   # Processed datasets (gitignored)
+│
+├── README.md                        # ✅ Complete user guide (810 lines)
+├── CONTINUATION.md                  # ✅ This file - continuation guide
+├── IMPLEMENTATION_PLAN.md           # ✅ Detailed 7-phase plan (510 lines)
+├── papers.md                        # ✅ Paper summary and references
+├── missing_parameters.md            # ✅ Parameters from original repo
+└── requirements.txt                 # ✅ Python dependencies
 ```
 
 ---
 
-## Git Branches
+## 🔑 Key Design Decisions
 
-- `main` - Stable, merged phases
-- `phase-1-data-pipeline` - Data download (merged)
-- `phase-2-preprocessing` - Technical indicators (merged)  
-- `phase-3-environment` - Trading environment (merged)
+### 1. Action Space (Position-Based)
+- **Actions:** 3 discrete - LONG(0), SHORT(1), FLAT(2)
+- **Position Values:** +1 (LONG), -1 (SHORT), 0 (FLAT)
+- **Rationale:** Sign indicates market direction for easy P&L calculation
+  ```python
+  pnl = position * log(exit_price / entry_price)
+  # LONG (+1):  profit when price goes up
+  # SHORT (-1): profit when price goes down
+  ```
 
-For Phase 4, create: `phase-4-neural-networks`
+### 2. Instant Position Flip
+- **Behavior:** LONG→SHORT or SHORT→LONG happens in ONE step
+- **Implementation:** Close current position, immediately open opposite
+- **Rationale:** Faster reaction to market reversals vs waiting one step
+- **Trade-off:** More complex logic, but more realistic trader behavior
+
+### 3. Lightweight Regime Detection
+- **Method:** Rolling volatility + ADX instead of Hidden Markov Model
+- **Regimes:** TRENDING_UP, TRENDING_DOWN, HIGH_VOLATILITY, RANGING
+- **Rationale:** HMM requires training/state estimation, rolling indicators are stateless and real-time friendly
+- **Benefit:** Easier to interpret and debug
+
+### 4. Single Timeframe (1h only)
+- **Decision:** Use only 1h candles (original paper used 1h, 4h, 1d)
+- **Rationale:** Simplicity for initial implementation
+- **Trade-off:** Less information, but cleaner architecture
+
+### 5. Futures-Only with Funding Fees
+- **Data Source:** Binance Futures (not Spot)
+- **Benefits:**
+  - Can SHORT natively
+  - Funding rate is valuable sentiment indicator
+  - Matches real trading conditions
+- **Implementation:** Funding fee applied every 8 hours (00:00, 08:00, 16:00 UTC)
+
+### 6. Position-Based Rewards (PositionTradingEnv)
+- **Reward Timing:** Only when closing positions (not unrealized P&L)
+- **Rationale:** Encourages completing trades, prevents "holding forever"
+- **Trade-off:** Sparse rewards during holding periods
+
+### 7. 28 Features (21 Active + 7 Reserved)
+- **Active:** 21 features currently used for training
+- **Reserved:** 7 slots for future funding-derived features (moving averages, volatility, etc.)
+- **Rationale:** Fixed network input size, flexibility for experimentation
+
+---
+
+## 🧠 Neural Network Architecture (Phase 4 - Complete)
+
+### ActorNetwork (151,459 parameters)
+```
+Input: (batch, 12, 28)  →  12 timesteps × 28 features
+
+Conv1D: 28 channels → 32 filters, kernel=3
+  ↓ GELU activation
+Flatten: 320 features (32 filters × 10 timesteps)
+  ↓
+FC Layer 1: 320 → 256
+  ↓ GELU activation
+FC Layer 2: 256 → 256
+  ↓ GELU activation
+Output: 256 → 3
+  ↓ Softmax
+Action Probabilities: [P(LONG), P(SHORT), P(FLAT)]
+```
+
+**Methods:**
+- `forward(state)` → action probabilities
+- `get_action(state, deterministic)` → sampled action + log prob
+- `evaluate_actions(states, actions)` → log probs + entropy for PPO
+
+### CriticNetwork (150,945 parameters)
+```
+Input: (batch, 12, 28)  →  12 timesteps × 28 features
+
+Conv1D: 28 channels → 32 filters, kernel=3
+  ↓ GELU activation
+Flatten: 320 features
+  ↓
+FC Layer 1: 320 → 256
+  ↓ GELU activation
+FC Layer 2: 256 → 256
+  ↓ GELU activation
+Output: 256 → 1
+  ↓ Linear (no activation)
+State Value: V(s)
+```
+
+**Methods:**
+- `forward(state)` → state value
+- `get_value(state)` → single value estimate
+- `evaluate_states(states)` → batch values for PPO
+
+**Weight Initialization:**
+- Conv/Hidden layers: Xavier and Kaiming initialization
+- Critic output layer: Uniform[-0.03, 0.03] for stable value learning
+
+---
+
+## 📊 Dataset & Features
+
+### Supported Cryptocurrencies (7)
+| Symbol | Pair | Data Start | Status |
+|--------|------|------------|--------|
+| BTC | BTC/USDT | 2019 | ✅ Available |
+| ETH | ETH/USDT | 2019 | ✅ Available |
+| XRP | XRP/USDT | 2020 | ✅ Available |
+| SOL | SOL/USDT | 2021 | ✅ Available |
+| BNB | BNB/USDT | 2020 | ✅ Available |
+| TRX | TRX/USDT | 2020 | ✅ Available |
+| DOGE | DOGE/USDT | 2021 | ✅ Available |
+
+### Features (28 total)
+
+**Active Features (21):**
+
+| Category | Count | Features |
+|----------|-------|----------|
+| Log Returns | 5 | open, high, low, close, volume |
+| Time | 1 | hour (0-23) |
+| Trend Indicators | 4 | macd_signal_diffs, aroon_up, aroon_down, adx |
+| Momentum Indicators | 3 | stoch, rsi, cci |
+| Price Relative | 4 | close_dema, close_vwap, bband_up_close, close_bband_down |
+| Volume | 2 | adl_diffs2, obv_diffs2 (second-order differences) |
+| Market Regime | 1 | regime_encoded (0-3) |
+| Funding Rate | 1 | funding_rate (raw 8-hour rate) |
+
+**Reserved Features (7):** Placeholder slots for future funding-derived features
+
+### Data Pipeline
+```
+Binance Futures API
+  ↓
+Raw OHLCV (hourly) + Funding Rate (8-hour)
+  ↓
+Log Returns + Hour Extraction
+  ↓
+Technical Indicators (11 indicators)
+  ↓
+Derived Features (price relatives, volume acceleration)
+  ↓
+Market Regime Detection (4 regimes)
+  ↓
+Merge Funding Rate (forward-fill to hourly)
+  ↓
+Min-Max Scaling [0, 1]
+  ↓
+Processed Dataset (28 features) + Scaler
+  ↓
+Sequences (12 timesteps, 28 features) + Train/Eval Split
+```
+
+### Train/Eval Split
+- **Training:** All data except last 2250 hours
+- **Evaluation:** Last 2250 hours (~3 months)
+
+---
+
+## 🎮 Trading Environment Features
+
+### PositionTradingEnv (Main Environment)
+
+**Capital Management:**
+- Initial capital: $10,000 (configurable)
+- Position sizing: `Capital × Risk × Leverage`
+- Risk per trade: 2% (configurable)
+- Leverage: 10x (configurable)
+- Isolated margin (max loss = risk amount)
+
+**Risk Controls:**
+- **Stop-Loss:** 2% from entry (auto-close on loss)
+- **Take-Profit:** 4% from entry (2:1 reward-risk ratio)
+- SL/TP checked using intra-candle high/low prices
+
+**Realistic Costs:**
+- **Transaction fees:** 0.1% per trade (Binance Futures maker/taker)
+- **Funding fees:** Every 8 hours when holding position
+  - Positive funding: LONG pays, SHORT receives
+  - Negative funding: SHORT pays, LONG receives
+- **Slippage:** Random normal distribution (mean=0.01%, std=0.02%, max=0.1%)
+
+**Drawdown Penalty:**
+- Threshold: 5% drawdown (starts penalizing)
+- Penalty: 0.5 × (drawdown - threshold), capped at 0.1
+- Encourages capital preservation
+
+**Observation Space:** `Box(0, 1, (12, 28), float32)`
+**Action Space:** `Discrete(3)` - LONG(0), SHORT(1), FLAT(2)
+
+---
+
+## 🧪 Testing Commands
+
+### Test Each Component
+
+```bash
+# 1. Test data download
+python -m data.downloaders.binance
+
+# 2. Test preprocessing
+python -m data.datasets.builder
+
+# 3. Test environment
+python -c "
+from environments.position_trading_env import create_position_trading_env
+
+env = create_position_trading_env('data/datasets/BTC_processed.csv')
+obs, info = env.reset()
+print(f'Observation shape: {obs.shape}')
+print(f'Initial balance: \${info[\"balance\"]:,.2f}')
+
+# Open LONG
+obs, reward, _, _, info = env.step(0)
+print(f'Position: {info[\"position\"]}, Entry: \${info[\"entry_price\"]:,.2f}')
+"
+
+# 4. Test Actor network
+python -c "
+import sys
+sys.path.insert(0, '.')
+from agents.networks.actor import ActorNetwork
+import torch
+
+actor = ActorNetwork()
+print(f'Actor parameters: {sum(p.numel() for p in actor.parameters()):,}')
+
+state = torch.randn(12, 28)
+action_probs = actor(state.unsqueeze(0))
+print(f'Action probs: {action_probs}')
+print(f'Sum: {action_probs.sum():.6f}')
+"
+
+# 5. Test Critic network
+python -c "
+import sys
+sys.path.insert(0, '.')
+from agents.networks.critic import CriticNetwork
+import torch
+
+critic = CriticNetwork()
+print(f'Critic parameters: {sum(p.numel() for p in critic.parameters()):,}')
+
+state = torch.randn(12, 28)
+value = critic.get_value(state)
+print(f'State value: {value:.4f}')
+"
+
+# 6. Run both network tests
+PYTHONPATH=/home/ngkhoa/TraderNet-CRv2-using-Pytorch-2:$PYTHONPATH python agents/networks/actor.py
+PYTHONPATH=/home/ngkhoa/TraderNet-CRv2-using-Pytorch-2:$PYTHONPATH python agents/networks/critic.py
+```
+
+---
+
+## 🌿 Git Workflow
+
+### Branches
+
+```
+main                       ← Stable, all merged phases
+├── phase1-project-setup   ← Phase 1 (merged)
+├── phase2-preprocessing   ← Phase 2 (merged)
+├── phase3-environment     ← Phase 3 (merged)
+└── phase4-neural-networks ← Phase 4 (merged)
+
+Next: phase5-ppo-agent     ← Create for Phase 5
+```
+
+### Workflow for Phase 5
+
+```bash
+# 1. Create Phase 5 branch
+git checkout main
+git checkout -b phase5-ppo-agent
+
+# 2. Implement PPO components
+# ... code implementation ...
+
+# 3. Test thoroughly
+# ... run tests ...
+
+# 4. Commit with clear messages
+git add agents/buffers/rollout_buffer.py
+git commit -m "feat(buffers): implement rollout buffer with GAE"
+
+git add agents/ppo_agent.py
+git commit -m "feat(agents): implement PPO agent training algorithm"
+
+# 5. Push to remote
+git push -u origin phase5-ppo-agent
+
+# 6. Merge to main when complete
+git checkout main
+git merge phase5-ppo-agent --no-ff
+git push origin main
+```
+
+---
+
+## 📚 Important References
+
+### Implementation References
+1. **Original Paper:** Kochliaridis et al. (2023) - "Combining deep reinforcement learning with technical analysis and trend monitoring on cryptocurrency markets"
+2. **PPO Paper:** Schulman et al. (2017) - "Proximal Policy Optimization Algorithms"
+3. **Original TensorFlow Repo:** [kochlisGit/TraderNet-CRv2](https://github.com/kochlisGit/TraderNet-CRv2)
+
+### Code References
+- `config/config.py` - Single source of truth for all hyperparameters
+- `IMPLEMENTATION_PLAN.md` - Detailed 7-phase roadmap
+- `papers.md` - Paper summary and key concepts
+- `missing_parameters.md` - Parameters extracted from original repo
+
+---
+
+## 💡 Tips for Next Developer/Bot
+
+### Understanding the Codebase
+1. **Start with:** `README.md` for high-level overview
+2. **Then read:** `CONTINUATION.md` (this file) for current status
+3. **Check:** `config/config.py` to understand all hyperparameters
+4. **Review:** `IMPLEMENTATION_PLAN.md` for detailed Phase 5 specs
+
+### Before Starting Phase 5
+1. ✅ Verify all Phase 1-4 components work (use testing commands above)
+2. ✅ Ensure data is downloaded (`data/storage/*.csv`)
+3. ✅ Ensure datasets are processed (`data/datasets/*_processed.csv`)
+4. ✅ Test both networks (Actor and Critic)
+5. ✅ Create `phase5-ppo-agent` branch from `main`
+
+### During Phase 5 Implementation
+1. **Read Phase 5 section** in `IMPLEMENTATION_PLAN.md` lines 357-389
+2. **Follow existing patterns:**
+   - Use centralized config from `config/config.py`
+   - Add docstrings to all classes and methods
+   - Include test code in `if __name__ == '__main__'` blocks
+   - Use type hints for function signatures
+3. **PPO Algorithm Flow:**
+   ```
+   Initialize Actor & Critic
+     ↓
+   FOR episode in total_timesteps:
+     ↓
+   Collect rollouts (interact with env)
+     ↓
+   Compute returns & advantages (GAE)
+     ↓
+   Update Actor (clipped surrogate loss)
+     ↓
+   Update Critic (value loss)
+     ↓
+   Log metrics, save checkpoints
+   ```
+
+### Common Pitfalls to Avoid
+- ❌ Don't hardcode hyperparameters (use `config/config.py`)
+- ❌ Don't forget to transpose for Conv1D: `(batch, seq, features)` → `(batch, features, seq)`
+- ❌ Don't create files without testing them first
+- ❌ Don't commit without clear, descriptive commit messages
+- ❌ Don't merge to main without testing thoroughly
+
+### What Makes This Implementation Special
+1. **Realistic Trading Simulation:**
+   - Funding fees (unique to futures)
+   - Random slippage
+   - Instant position flips
+   - Intra-candle SL/TP triggers
+
+2. **Clean Architecture:**
+   - Centralized configuration
+   - Modular components
+   - Type hints throughout
+   - Comprehensive documentation
+
+3. **Production-Ready:**
+   - Proper git workflow
+   - Phase-based development
+   - Extensive testing
+   - Clear continuation path
+
+---
+
+## 📝 Summary for Next Session
+
+**What's Done:**
+- ✅ Data pipeline (Binance Futures OHLCV + Funding)
+- ✅ Preprocessing (21 active features + regime detection)
+- ✅ Trading environment (Realistic position-based)
+- ✅ Neural networks (Actor-Critic, 302K total params)
+
+**What's Next:**
+- ⏳ Rollout Buffer (store experiences, compute GAE)
+- ⏳ PPO Agent (training algorithm)
+- ⏳ Training script (train on all cryptos)
+
+**Ready to Start:**
+```bash
+git checkout main
+git checkout -b phase5-ppo-agent
+# Start implementing agents/buffers/rollout_buffer.py
+```
+
+**Expected Timeline:**
+- Phase 5: ~800-1000 lines (PPO + Buffer)
+- Phase 6: ~400-600 lines (Training/Eval scripts)
+- Phase 7: ~300-400 lines (Metrics)
+
+**Total Project:** ~6,500-7,500 lines when complete
+
+---
+
+**Last Updated:** 2025-11-28
+**Next Update:** After Phase 5 completion
+**Questions?** Check README.md or IMPLEMENTATION_PLAN.md
