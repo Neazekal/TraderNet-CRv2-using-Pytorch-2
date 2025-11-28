@@ -8,7 +8,7 @@
 
 ## Project Overview
 
-A PyTorch implementation of TraderNet-CRv2 that combines Proximal Policy Optimization (PPO) with technical analysis for cryptocurrency futures trading. The system uses deep reinforcement learning to learn profitable trading strategies while managing risk through stop-loss, take-profit, and position sizing.
+A PyTorch implementation of TraderNet-CRv2 that combines QR-DQN (distributional DQN) and Categorical SAC with technical analysis for cryptocurrency futures trading. The system uses deep reinforcement learning to learn profitable trading strategies while managing risk through stop-loss, take-profit, and position sizing.
 
 **Paper:** "Combining deep reinforcement learning with technical analysis and trend monitoring on cryptocurrency markets" (Neural Computing and Applications, 2023)
 
@@ -25,8 +25,8 @@ A PyTorch implementation of TraderNet-CRv2 that combines Proximal Policy Optimiz
 | **Phase 1** | COMPLETE | ~1,500 | Data download (Binance Futures OHLCV + Funding Rate) |
 | **Phase 2** | COMPLETE | ~1,500 | Preprocessing (21 features: technical indicators + regime detection) |
 | **Phase 3** | COMPLETE | ~1,300 | Trading environment (Position-based with realistic costs) |
-| **Phase 4** | COMPLETE | ~529 | Neural Networks (Actor-Critic for PPO) |
-| **Phase 5** | NEXT | TBD | PPO Agent (training algorithm) |
+| **Phase 4** | COMPLETE | ~529 | Neural Networks (Actor-Critic backbones) |
+| **Phase 5** | NEXT | TBD | RL Agents (QR-DQN + Categorical SAC) |
 | **Phase 6** | PLANNED | TBD | Training & Evaluation scripts |
 | **Phase 7** | PLANNED | TBD | Metrics & Visualization |
 
@@ -35,56 +35,72 @@ A PyTorch implementation of TraderNet-CRv2 that combines Proximal Policy Optimiz
 
 ---
 
-## Next Phase: Phase 5 - PPO Agent
+## Next Phase: Phase 5 - QR-DQN & Categorical SAC Agents
 
 ### What Needs to Be Built
 
-**1. Rollout Buffer** (`agents/buffers/rollout_buffer.py`)
+**1. Replay / Rollout Buffer** (`agents/buffers/rollout_buffer.py`)
 - Store experiences during environment interaction
-- Calculate returns and advantages using GAE (Generalized Advantage Estimation)
-- Support batch sampling for PPO training
+- Prioritized replay support for rare regimes
+- Quantile targets for distributional learning (QR-DQN)
 
-**2. PPO Agent** (`agents/ppo_agent.py`)
-- Initialize Actor and Critic networks
-- Collect rollouts from environment
-- Compute PPO loss (clipped surrogate objective)
-- Update both networks using Adam optimizer
-- Support separate learning rates for actor/critic
+**2. QR-DQN Agent** (`agents/qrdqn_agent.py`)
+- Initialize Q-networks with quantile heads
+- Collect transitions and update with quantile regression Huber loss
+- Target network updates and prioritized sampling
 
-**3. Key Components to Implement:**
+**3. Categorical SAC Agent** (`agents/categorical_sac_agent.py`)
+- Twin Q-networks and categorical policy head
+- Entropy temperature auto-tuning
+- Target smoothing and replay-based updates
+
+**4. Key Components to Implement:**
 
 ```python
-class RolloutBuffer:
-    """Store experiences and compute advantages."""
-    def store(self, state, action, reward, done, value, log_prob)
-    def compute_returns_and_advantages(self, last_value, gamma, gae_lambda)
-    def get_batches(self, batch_size)
-    def clear()
+class ReplayBuffer:
+    """Store experiences with optional priorities/quantile targets."""
+    def store(self, state, action, reward, done, next_state)
+    def sample(self, batch_size)
+    def update_priorities(self, indices, priorities)
 
-class PPOAgent:
-    """PPO training algorithm."""
-    def __init__(self, actor, critic, learning_rate, ...)
-    def collect_rollouts(self, env, num_steps)
-    def update_policy(self, rollout_buffer)
-    def train(self, env, total_timesteps)
-    def evaluate(self, env)
+class QRDQNAgent:
+    def train_step(self, batch)
+    def select_action(self, state, epsilon)
+    def save(self, path)
+    def load(self, path)
+
+class CategoricalSACAgent:
+    def train_step(self, batch)
+    def select_action(self, state, deterministic=False)
     def save(self, path)
     def load(self, path)
 ```
 
-**4. PPO Hyperparameters** (already in `config/config.py`):
+**5. Hyperparameters** (to centralize in `config/config.py`):
 
 ```python
-PPO_PARAMS = {
-    'learning_rate': 0.0005,      # Adam learning rate
-    'epsilon_clip': 0.3,          # PPO clipping parameter
-    'gamma': 0.99,                # Discount factor
-    'gae_lambda': 0.95,           # GAE lambda for advantage estimation
-    'num_epochs': 40,             # PPO update epochs per rollout
-    'batch_size': 128,            # Mini-batch size for updates
-    'value_loss_coef': 0.5,       # Value loss coefficient
-    'entropy_coef': 0.01,         # Entropy bonus coefficient
-    'max_grad_norm': 0.5,         # Gradient clipping
+QR_DQN_PARAMS = {
+    'learning_rate': 5e-4,
+    'gamma': 0.99,
+    'num_quantiles': 51,
+    'target_update_interval': 2000,
+    'batch_size': 128,
+    'huber_kappa': 1.0,
+    'replay_buffer_size': 500_000,
+    'priority_alpha': 0.6,
+    'priority_beta_start': 0.4,
+    'priority_beta_frames': 500_000,
+}
+
+CATEGORICAL_SAC_PARAMS = {
+    'learning_rate': 5e-4,
+    'gamma': 0.99,
+    'tau': 0.005,
+    'batch_size': 256,
+    'entropy_target': -1.0,
+    'alpha_init': 0.2,
+    'replay_buffer_size': 500_000,
+    'target_update_interval': 1,
 }
 ```
 
@@ -139,9 +155,10 @@ TraderNet-CRv2-using-Pytorch-2/
 │   │   ├── __init__.py              # Network exports
 │   │   ├── actor.py                 # ActorNetwork (151,459 params)
 │   │   └── critic.py                # CriticNetwork (150,945 params)
-│   ├── buffers/                     # NEXT: Rollout buffer
-│   │   └── rollout_buffer.py        # TODO: Experience storage + GAE
-│   └── ppo_agent.py                 # NEXT: PPO training algorithm
+│   ├── buffers/                     # NEXT: Replay/quantile buffer
+│   │   └── rollout_buffer.py        # TODO: Experience storage + prioritized replay
+│   ├── qrdqn_agent.py               # TODO: QR-DQN training algorithm
+│   └── categorical_sac_agent.py     # TODO: Categorical SAC training algorithm
 │
 ├── metrics/                         # PLANNED: Trading metrics
 │   └── trading/
@@ -237,7 +254,7 @@ Action Probabilities: [P(LONG), P(SHORT), P(FLAT)]
 **Methods:**
 - `forward(state)` → action probabilities
 - `get_action(state, deterministic)` → sampled action + log prob
-- `evaluate_actions(states, actions)` → log probs + entropy for PPO
+- `evaluate_actions(states, actions)` → log probs + entropy (used by categorical SAC)
 
 ### CriticNetwork (150,945 parameters)
 ```
@@ -259,7 +276,7 @@ State Value: V(s)
 **Methods:**
 - `forward(state)` → state value
 - `get_value(state)` → single value estimate
-- `evaluate_states(states)` → batch values for PPO
+- `evaluate_states(states)` → batch values for training
 
 **Weight Initialization:**
 - Conv/Hidden layers: Xavier and Kaiming initialization
@@ -433,7 +450,7 @@ main                       ← Stable, all merged phases
 ├── phase3-environment     ← Phase 3 (merged)
 └── phase4-neural-networks ← Phase 4 (merged)
 
-Next: phase5-ppo-agent     ← Create for Phase 5
+Next: phase5-rl-agents     ← Create for Phase 5
 ```
 
 ### Workflow for Phase 5
@@ -441,27 +458,30 @@ Next: phase5-ppo-agent     ← Create for Phase 5
 ```bash
 # 1. Create Phase 5 branch
 git checkout main
-git checkout -b phase5-ppo-agent
+git checkout -b phase5-rl-agents
 
-# 2. Implement PPO components
-# ... code implementation ...
+# 2. Implement RL components
+# ... buffer + QR-DQN + Categorical SAC ...
 
 # 3. Test thoroughly
 # ... run tests ...
 
 # 4. Commit with clear messages
 git add agents/buffers/rollout_buffer.py
-git commit -m "feat(buffers): implement rollout buffer with GAE"
+git commit -m "feat(buffers): add prioritized replay with quantile targets"
 
-git add agents/ppo_agent.py
-git commit -m "feat(agents): implement PPO agent training algorithm"
+git add agents/qrdqn_agent.py
+git commit -m "feat(agents): add QR-DQN agent"
+
+git add agents/categorical_sac_agent.py
+git commit -m "feat(agents): add categorical SAC agent"
 
 # 5. Push to remote
-git push -u origin phase5-ppo-agent
+git push -u origin phase5-rl-agents
 
 # 6. Merge to main when complete
 git checkout main
-git merge phase5-ppo-agent --no-ff
+git merge phase5-rl-agents --no-ff
 git push origin main
 ```
 
@@ -471,8 +491,9 @@ git push origin main
 
 ### Implementation References
 1. **Original Paper:** Kochliaridis et al. (2023) - "Combining deep reinforcement learning with technical analysis and trend monitoring on cryptocurrency markets"
-2. **PPO Paper:** Schulman et al. (2017) - "Proximal Policy Optimization Algorithms"
-3. **Original TensorFlow Repo:** [kochlisGit/TraderNet-CRv2](https://github.com/kochlisGit/TraderNet-CRv2)
+2. **SAC Paper:** Haarnoja et al. (2018) - "Soft Actor-Critic: Off-Policy Maximum Entropy Deep RL"
+3. **QR-DQN Paper:** Dabney et al. (2018) - "Distributional RL with Quantile Regression"
+4. **Original TensorFlow Repo:** [kochlisGit/TraderNet-CRv2](https://github.com/kochlisGit/TraderNet-CRv2)
 
 ### Code References
 - `config/config.py` - Single source of truth for all hyperparameters
@@ -495,7 +516,7 @@ git push origin main
 2. Ensure data is downloaded (`data/storage/*.csv`)
 3. Ensure datasets are processed (`data/datasets/*_processed.csv`)
 4. Test both networks (Actor and Critic)
-5. Create `phase5-ppo-agent` branch from `main`
+5. Create `phase5-rl-agents` branch from `main`
 
 ### During Phase 5 Implementation
 1. **Read Phase 5 section** in `IMPLEMENTATION_PLAN.md` lines 357-389
@@ -504,21 +525,16 @@ git push origin main
    - Add docstrings to all classes and methods
    - Include test code in `if __name__ == '__main__'` blocks
    - Use type hints for function signatures
-3. **PPO Algorithm Flow:**
+3. **RL Algorithm Flow (QR-DQN + Categorical SAC):**
    ```
-   Initialize Actor & Critic
+   Initialize shared Conv1D backbones
      ↓
-   FOR episode in total_timesteps:
+   Collect transitions into prioritized replay
      ↓
-   Collect rollouts (interact with env)
+   QR-DQN: quantile regression loss + target network updates
+   Cat-SAC: twin Q updates, policy logits, entropy temperature tuning
      ↓
-   Compute returns & advantages (GAE)
-     ↓
-   Update Actor (clipped surrogate loss)
-     ↓
-   Update Critic (value loss)
-     ↓
-   Log metrics, save checkpoints
+   Periodically update targets, log metrics, save checkpoints
    ```
 
 ### Common Pitfalls to Avoid
@@ -558,19 +574,19 @@ git push origin main
 - Neural networks (Actor-Critic, 302K total params)
 
 **What's Next:**
-- Rollout Buffer (store experiences, compute GAE)
-- PPO Agent (training algorithm)
+- Replay/quantile buffer (prioritized)
+- QR-DQN and Categorical SAC agents
 - Training script (train on all cryptos)
 
 **Ready to Start:**
 ```bash
 git checkout main
-git checkout -b phase5-ppo-agent
+git checkout -b phase5-rl-agents
 # Start implementing agents/buffers/rollout_buffer.py
 ```
 
 **Expected Timeline:**
-- Phase 5: ~800-1000 lines (PPO + Buffer)
+- Phase 5: ~900-1100 lines (buffers + QR-DQN + Cat-SAC)
 - Phase 6: ~400-600 lines (Training/Eval scripts)
 - Phase 7: ~300-400 lines (Metrics)
 

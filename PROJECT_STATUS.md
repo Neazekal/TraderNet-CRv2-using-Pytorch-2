@@ -3,7 +3,7 @@
 **Last Updated:** 2025-11-28
 **Project:** TraderNet-CRv2 PyTorch Implementation
 **Current Phase:** Phase 4 Complete 
-**Next Phase:** Phase 5 (PPO Agent) 
+**Next Phase:** Phase 5 (QR-DQN & Categorical SAC Agents) 
 
 ---
 
@@ -28,7 +28,7 @@ Phase 1: Data Download           (COMPLETE - 1,500 LOC)
 Phase 2: Preprocessing            (COMPLETE - 1,500 LOC)
 Phase 3: Trading Environment      (COMPLETE - 1,300 LOC)
 Phase 4: Neural Networks          (COMPLETE - 529 LOC)
-Phase 5: PPO Agent               (NEXT - TBD)
+Phase 5: QR-DQN & Categorical SAC Agents (NEXT - TBD)
 Phase 6: Training Scripts        (PLANNED - TBD)
 Phase 7: Metrics & Visualization (PLANNED - TBD)
 ```
@@ -53,21 +53,21 @@ Phase 7: Metrics & Visualization (PLANNED - TBD)
 - **ActorNetwork:** Outputs action probabilities (LONG/SHORT/FLAT)
 - **CriticNetwork:** Estimates state values V(s)
 - Both use Conv1D + FC layers with GELU activation
-- Ready for PPO training
+- Ready to attach QR-DQN or Categorical SAC heads
 
 ---
 
 ## What's Next (Phase 5)
 
 ### Files to Create
-1. `agents/buffers/rollout_buffer.py` - Store experiences + GAE
-2. `agents/ppo_agent.py` - PPO training algorithm
+1. `agents/buffers/rollout_buffer.py` - Replay buffer with prioritized sampling and quantile targets
+2. `agents/qrdqn_agent.py` - QR-DQN training algorithm
+3. `agents/categorical_sac_agent.py` - Categorical SAC training algorithm
 
 ### Key Features to Implement
-- Rollout collection from environment
-- Generalized Advantage Estimation (GAE)
-- Clipped surrogate objective loss
-- Actor-Critic policy updates
+- Replay collection from environment
+- Quantile regression loss with target network updates (QR-DQN)
+- Twin Q-networks, policy logits, and entropy temperature tuning (Categorical SAC)
 - Checkpoint saving/loading
 
 ---
@@ -77,24 +77,23 @@ Phase 7: Metrics & Visualization (PLANNED - TBD)
 ```bash
 # 1. Create branch
 git checkout main
-git checkout -b phase5-ppo-agent
+git checkout -b phase5-rl-agents
 
-# 2. Create buffer file
+# 2. Create buffer module
 touch agents/buffers/__init__.py
 touch agents/buffers/rollout_buffer.py
 
-# 3. Implement RolloutBuffer class
-# - Store (state, action, reward, done, value, log_prob)
-# - Compute returns and advantages using GAE
-# - Provide batched samples for training
+# 3. Implement ReplayBuffer / RolloutBuffer
+# - Store (state, action, reward, done, next_state)
+# - Prioritized sampling and quantile targets
 
-# 4. Create PPO agent file
-touch agents/ppo_agent.py
+# 4. Create agent stubs
+touch agents/qrdqn_agent.py
+touch agents/categorical_sac_agent.py
 
-# 5. Implement PPOAgent class
-# - Initialize Actor and Critic networks
-# - Collect rollouts from environment
-# - Update policy using PPO algorithm
+# 5. Implement agents
+# - QRDQNAgent: quantile regression loss, target nets
+# - CategoricalSACAgent: twin Q, policy logits, entropy temperature
 # - Save/load checkpoints
 ```
 
@@ -145,22 +144,40 @@ Merged Branches:
   phase3-environment
   phase4-neural-networks
 
-Ready to create: phase5-ppo-agent
+Ready to create: phase5-rl-agents
 ```
 
 ---
 
 ## Configuration Highlights
 
-### PPO Hyperparameters (Already Configured)
+### QR-DQN Hyperparameters (Draft)
 ```python
-PPO_PARAMS = {
+QR_DQN_PARAMS = {
     'learning_rate': 0.0005,
-    'epsilon_clip': 0.3,
     'gamma': 0.99,
-    'gae_lambda': 0.95,
-    'num_epochs': 40,
+    'num_quantiles': 51,
     'batch_size': 128,
+    'target_update_interval': 2000,
+    'huber_kappa': 1.0,
+    'replay_buffer_size': 500_000,
+    'priority_alpha': 0.6,
+    'priority_beta_start': 0.4,
+    'priority_beta_frames': 500_000,
+}
+```
+
+### Categorical SAC Hyperparameters (Draft)
+```python
+CATEGORICAL_SAC_PARAMS = {
+    'learning_rate': 0.0005,
+    'gamma': 0.99,
+    'tau': 0.005,
+    'batch_size': 256,
+    'entropy_target': -1.0,
+    'alpha_init': 0.2,
+    'replay_buffer_size': 500_000,
+    'target_update_interval': 1,
 }
 ```
 
@@ -221,16 +238,16 @@ Features:
 - **Instant flips**: Can go LONG→SHORT in one step
 - **Funding fees**: Charged every 8 hours on futures positions
 - **28 features**: 21 active + 7 reserved for future use
-- **GAE**: Generalized Advantage Estimation for PPO
-- **Clipped objective**: PPO's key innovation for stable training
+- **Distributional value learning**: QR-DQN quantile regression
+- **Entropy-regularized policy**: Categorical SAC with temperature tuning
 
 ### Success Checklist
 - [ ] Read documentation (README + CONTINUATION)
 - [ ] Understand Phase 5 requirements
 - [ ] Review existing network code (actor.py, critic.py)
-- [ ] Create phase5-ppo-agent branch
-- [ ] Implement RolloutBuffer with GAE
-- [ ] Implement PPOAgent with clipped loss
+- [ ] Create phase5-rl-agents branch
+- [ ] Implement Replay/Quantile buffer
+- [ ] Implement QRDQNAgent and CategoricalSACAgent
 - [ ] Test components individually
 - [ ] Commit with clear messages
 - [ ] Merge to main when complete
@@ -240,7 +257,7 @@ Features:
 **Status:** Ready for Phase 5 implementation
 **Blockers:** None
 **Dependencies:** All Phase 1-4 complete and tested
-**Next Action:** Create `phase5-ppo-agent` branch and start implementing RolloutBuffer
+**Next Action:** Create `phase5-rl-agents` branch and start implementing QR-DQN + Categorical SAC
 
 ---
 

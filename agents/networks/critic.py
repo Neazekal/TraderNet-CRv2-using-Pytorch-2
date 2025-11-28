@@ -1,7 +1,7 @@
 """
-Critic Network for TraderNet-CRv2 PPO Agent
+Critic Network for TraderNet-CRv2 discrete RL agents.
 
-The Critic network estimates state values for advantage calculation.
+The Critic network estimates state values for advantage calculation and can serve as a backbone for value/Q heads.
 Maps state observations to a single value estimate V(s).
 """
 
@@ -19,7 +19,7 @@ from config.config import (
 
 class CriticNetwork(nn.Module):
     """
-    Critic network for PPO agent that estimates state values.
+    Critic network that estimates state values for discrete-action agents.
 
     Architecture:
         - Conv1D layer for temporal feature extraction
@@ -185,7 +185,7 @@ class CriticNetwork(nn.Module):
     def evaluate_states(self, states: torch.Tensor) -> torch.Tensor:
         """
         Evaluate value estimates for a batch of states.
-        Used during PPO training.
+        Useful for policy-gradient style training loops.
 
         Args:
             states: Batch of state observations (batch, sequence_length, num_features)

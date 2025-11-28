@@ -1,6 +1,6 @@
 # TraderNet-CRv2 PyTorch
 
-A PyTorch implementation of **TraderNet-CRv2** - a Deep Reinforcement Learning system for cryptocurrency trading that combines PPO with technical analysis and safety mechanisms.
+A PyTorch implementation of **TraderNet-CRv2** - a Deep Reinforcement Learning system for cryptocurrency trading that combines QR-DQN and Categorical SAC with technical analysis and safety mechanisms.
 
 Based on the paper: *"Combining deep reinforcement learning with technical analysis and trend monitoring on cryptocurrency markets"* (Neural Computing and Applications, 2023)
 
@@ -10,7 +10,7 @@ Original TensorFlow implementation: [kochlisGit/TraderNet-CRv2](https://github.c
 
 ## Features
 
-- **PPO Agent**: Proximal Policy Optimization for trading decisions (LONG/SHORT/FLAT)
+- **RL Agents**: QR-DQN (distributional) and Categorical SAC for trading decisions (LONG/SHORT/FLAT)
 - **Technical Analysis**: 11 indicators (MACD, RSI, Bollinger Bands, ADX, etc.)
 - **Realistic Trading**: Position-based environment with capital management
 - **Risk Management**: Stop-Loss, Take-Profit, and leverage support
@@ -549,11 +549,11 @@ info = {
 
 ## Phase 4: Neural Networks
 
-Deep neural networks for the PPO agent using PyTorch.
+Deep neural networks for the discrete RL agents (QR-DQN and Categorical SAC) using PyTorch.
 
 ### Actor Network
 
-The Actor network outputs action probabilities (policy).
+The Actor network outputs action probabilities (policy) for the categorical action space.
 
 ```python
 from agents.networks.actor import ActorNetwork
@@ -576,11 +576,11 @@ print(f"Parameters: {sum(p.numel() for p in actor.parameters()):,}")
 **Methods**:
 - `forward(state)` - Get action probabilities
 - `get_action(state, deterministic=False)` - Sample action and log probability
-- `evaluate_actions(states, actions)` - Compute log probs & entropy for PPO
+- `evaluate_actions(states, actions)` - Compute log probs & entropy (used by categorical SAC)
 
 ### Critic Network
 
-The Critic network estimates state values (V(s)) for advantage calculation.
+The Critic network estimates state values (V(s)) and can be adapted as a Q-value backbone for QR-DQN or as a value estimator for categorical SAC.
 
 ```python
 from agents.networks.critic import CriticNetwork
@@ -603,7 +603,7 @@ print(f"Parameters: {sum(p.numel() for p in critic.parameters()):,}")
 **Methods**:
 - `forward(state)` - Get state value
 - `get_value(state)` - Single state value estimate
-- `evaluate_states(states)` - Batch value estimates for PPO
+- `evaluate_states(states)` - Batch value estimates for training loops
 
 ### Key Features
 
@@ -616,10 +616,10 @@ print(f"Parameters: {sum(p.numel() for p in critic.parameters()):,}")
 - Conv/Hidden layers: Xavier and Kaiming initialization
 - Critic output layer: Uniform[-0.03, 0.03] for stable value learning
 
-**PPO Compatibility**:
-- Actor provides log probabilities and entropy for policy gradient
-- Critic provides value estimates for advantage calculation
-- Both support batched forward passes for efficient training
+**How to use with QR-DQN & Categorical SAC**:
+- For **QR-DQN**, keep the Conv1D + FC backbone and replace the output layer with a quantile head of shape `(num_actions, num_quantiles)`.
+- For **Categorical SAC**, use the actor as the categorical policy head and pair it with twin Q-networks that share the same backbone but output Q-values per action.
+- Both networks support batched forward passes for efficient training.
 
 ### Testing Networks
 
@@ -724,17 +724,30 @@ SLIPPAGE_PARAMS = {
     'slippage_std': 0.00005,             # Standard deviation: 0.005%
 }
 
-# PPO Hyperparameters
-PPO_PARAMS = {
+# QR-DQN Hyperparameters
+QR_DQN_PARAMS = {
     'learning_rate': 0.0005,
-    'epsilon_clip': 0.3,
     'gamma': 0.99,
-    'gae_lambda': 0.95,
-    'num_epochs': 40,
+    'num_quantiles': 51,
     'batch_size': 128,
-    'value_loss_coef': 0.5,
-    'entropy_coef': 0.01,
-    'max_grad_norm': 0.5,
+    'target_update_interval': 2000,
+    'huber_kappa': 1.0,
+    'replay_buffer_size': 500_000,
+    'priority_alpha': 0.6,
+    'priority_beta_start': 0.4,
+    'priority_beta_frames': 500_000,
+}
+
+# Categorical SAC Hyperparameters
+CATEGORICAL_SAC_PARAMS = {
+    'learning_rate': 0.0005,
+    'gamma': 0.99,
+    'tau': 0.005,              # Target smoothing
+    'batch_size': 256,
+    'entropy_target': -1.0,    # For auto temperature
+    'alpha_init': 0.2,         # Initial entropy temperature
+    'replay_buffer_size': 500_000,
+    'target_update_interval': 1,
 }
 
 # Network Architecture
@@ -818,7 +831,7 @@ Closed position, Final balance: $9,975.21
 - [x] **Phase 2**: Technical analysis & preprocessing pipeline
 - [x] **Phase 3**: Trading environment & reward functions
 - [x] **Phase 4**: Neural networks (Actor/Critic)
-- [ ] **Phase 5**: PPO agent implementation
+- [ ] **Phase 5**: RL agents (QR-DQN + Categorical SAC)
 - [ ] **Phase 6**: Training & evaluation scripts
 - [ ] **Phase 7**: Metrics & visualization
 
@@ -827,8 +840,9 @@ Closed position, Final balance: $9,975.21
 ## References
 
 1. Kochliaridis et al. (2023) - *"Combining deep reinforcement learning with technical analysis and trend monitoring on cryptocurrency markets"*
-2. Schulman et al. (2017) - *"Proximal Policy Optimization Algorithms"*
-3. Original implementation: [kochlisGit/TraderNet-CRv2](https://github.com/kochlisGit/TraderNet-CRv2)
+2. Haarnoja et al. (2018) - *"Soft Actor-Critic: Off-Policy Maximum Entropy Deep RL"*
+3. Dabney et al. (2018) - *"Distributional RL with Quantile Regression"*
+4. Original implementation: [kochlisGit/TraderNet-CRv2](https://github.com/kochlisGit/TraderNet-CRv2)
 
 ---
 

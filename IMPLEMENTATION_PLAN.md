@@ -36,8 +36,9 @@ tradernet_pytorch/
 │   ├── networks/
 │   │   ├── actor.py           # Actor network
 │   │   └── critic.py          # Critic network
-│   ├── ppo.py                 # PPO agent
-│   └── buffers.py             # Rollout buffer
+│   ├── qrdqn_agent.py         # QR-DQN agent
+│   ├── categorical_sac_agent.py # Categorical SAC agent
+│   └── buffers.py             # Replay/rollout buffer
 ├── rules/
 │   └── smurfing.py            # Smurf integration wrapper
 ├── metrics/
@@ -115,14 +116,30 @@ TA_PARAMS = {
     'bbands_window': 20,
 }
 
-# PPO hyperparameters
-PPO_PARAMS = {
+# QR-DQN hyperparameters
+QR_DQN_PARAMS = {
     'learning_rate': 0.0005,
-    'epsilon_clip': 0.3,
     'gamma': 0.99,
-    'gae_lambda': 0.95,
-    'num_epochs': 40,
+    'num_quantiles': 51,
     'batch_size': 128,
+    'target_update_interval': 2000,
+    'huber_kappa': 1.0,
+    'replay_buffer_size': 500_000,
+    'priority_alpha': 0.6,
+    'priority_beta_start': 0.4,
+    'priority_beta_frames': 500_000,
+}
+
+# Categorical SAC hyperparameters
+CATEGORICAL_SAC_PARAMS = {
+    'learning_rate': 0.0005,
+    'gamma': 0.99,
+    'tau': 0.005,
+    'batch_size': 256,
+    'entropy_target': -1.0,
+    'alpha_init': 0.2,
+    'replay_buffer_size': 500_000,
+    'target_update_interval': 1,
 }
 
 # Network architecture
@@ -354,37 +371,35 @@ class CriticNetwork(nn.Module):
 
 ---
 
-## Phase 5: PPO Agent
+## Phase 5: RL Agents (QR-DQN & Categorical SAC)
 
-### 5.1 Hyperparameters
-| Parameter | Value |
-|-----------|-------|
-| Learning rate | 0.0005 |
-| Epsilon clipping | 0.3 |
-| GAE lambda | 0.95 |
-| Gamma (discount) | 0.99 |
-| Num epochs | 40 |
-| Mini-batch size | 128 |
-| Optimizer | Adam |
+### 5.1 Key Hyperparameters
+| Agent | Highlight Params |
+|-------|------------------|
+| QR-DQN | lr=5e-4, gamma=0.99, num_quantiles=51, batch_size=128, target_update=2000, prioritized replay (alpha=0.6, beta_start=0.4) |
+| Categorical SAC | lr=5e-4, gamma=0.99, tau=0.005, batch_size=256, entropy_target=-1.0, alpha_init=0.2, target_update=1 |
 
-### 5.2 PPO Implementation Details
-- Clipped surrogate objective
-- Generalized Advantage Estimation (GAE)
-- Separate actor-critic networks (not shared backbone)
-- Greedy evaluation policy
+### 5.2 Implementation Details
+- Shared Conv1D + FC backbone for all heads.
+- **QR-DQN:** quantile regression Huber loss; target network updates; prioritized replay buffer.
+- **Categorical SAC:** twin Q-networks, categorical policy logits, entropy temperature auto-tuning; soft target updates.
+- Replay buffer supports priorities and optional n-step returns.
+- Evaluation policy: greedy (QR-DQN) / max-prob or deterministic (Cat-SAC).
 
-### 5.3 PPO Loss Function
+### 5.3 Core Losses (sketch)
 ```python
-# Clipped surrogate objective
-ratio = new_prob / old_prob
-clipped_ratio = torch.clamp(ratio, 1 - epsilon, 1 + epsilon)
-policy_loss = -torch.min(ratio * advantage, clipped_ratio * advantage).mean()
+# QR-DQN quantile Huber loss
+td_errors = target_quantiles - predicted_quantiles
+huber = huber_loss(td_errors, kappa)
+quantile_weights = torch.abs(tau_hat - (td_errors < 0).float())
+loss = (quantile_weights * huber).mean()
 
-# Value loss
-value_loss = F.mse_loss(values, returns)
-
-# Total loss
-loss = policy_loss + 0.5 * value_loss
+# Categorical SAC losses
+q1, q2 = twin_q(states, actions)
+target_v = torch.min(q1_target, q2_target) - alpha * log_pi
+critic_loss = F.mse_loss(q1, target_v) + F.mse_loss(q2, target_v)
+policy_loss = (alpha * log_pi - torch.min(q1_policy, q2_policy)).mean()
+alpha_loss = -(log_alpha * (log_pi + entropy_target).detach()).mean()
 ```
 
 ---
@@ -442,8 +457,8 @@ class MaximumDrawdown(Metric):
 ### 7.2 Training Flow
 1. Load preprocessed dataset
 2. Create train/eval environments
-3. Train TraderNet (PPO with MarketLimitOrder reward)
-4. Train Smurf (PPO with Smurf reward)
+3. Train TraderNet (QR-DQN with MarketLimitOrder reward)
+4. Train Smurf (Categorical SAC with Smurf reward)
 5. Save best checkpoints by average return
 
 ### 7.3 Integrated Evaluation
@@ -480,7 +495,7 @@ supported_cryptos = {
 | 4 | Gymnasium environment | High | Medium |
 | 5 | Reward functions | High | Low |
 | 6 | Actor/Critic networks | High | Medium |
-| 7 | PPO agent | High | High |
+| 7 | RL agents (QR-DQN & Categorical SAC) | High | High |
 | 8 | Smurf mechanism | Medium | Low |
 | 9 | Metrics | Medium | Low |
 | 10 | Training script | High | Medium |
@@ -494,7 +509,7 @@ supported_cryptos = {
 |--------|----------------------|-----------------|
 | Framework | TensorFlow 2.x + TF-Agents | PyTorch 2.x |
 | Environment | gym + TFPyEnvironment wrappers | Gymnasium |
-| PPO | TF-Agents PPOClipAgent | Custom implementation |
+| Agents | TF-Agents clipped policy-gradient agent | QR-DQN + Categorical SAC (custom) |
 | Networks | tf.keras.layers | torch.nn.Module |
 | Replay Buffer | TFUniformReplayBuffer | Custom RolloutBuffer |
 | Checkpointing | TF Checkpointer | torch.save/load_state_dict |
@@ -506,4 +521,5 @@ supported_cryptos = {
 
 1. Paper: Kochliaridis et al. (2023) "Combining deep reinforcement learning with technical analysis and trend monitoring on cryptocurrency markets"
 2. Original repo: https://github.com/kochlisGit/TraderNet-CRv2
-3. PPO paper: Schulman et al. (2017) "Proximal Policy Optimization Algorithms"
+3. SAC paper: Haarnoja et al. (2018) "Soft Actor-Critic: Off-Policy Maximum Entropy Deep RL"
+4. QR-DQN paper: Dabney et al. (2018) "Distributional RL with Quantile Regression"

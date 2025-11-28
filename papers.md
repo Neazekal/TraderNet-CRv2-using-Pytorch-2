@@ -13,7 +13,7 @@ Cryptocurrency markets experienced a significant increase in popularity, which m
 
 This research proposes the combination of DRL approaches with rule-based safety mechanisms to both maximize PNL returns and minimize trading risk. First, a DRL agent is trained to maximize PNL returns, using a novel reward function. Then, during the exploitation phase, a rule-based mechanism is deployed to prevent uncertain actions from being executed. Finally, another novel safety mechanism is proposed, which considers the actions of a more conservatively trained agent, in order to identify high-risk trading periods and avoid trading. Our experiments on 5 popular cryptocurrencies show that the integration of these three methods achieves very promising results.
 
-**Keywords:** Deep reinforcement learning, Machine learning, Risk optimization, Proximal policy optimization, Trading, Technical analysis.
+**Keywords:** Deep reinforcement learning, Machine learning, Risk optimization, Distributional DQN, Soft Actor-Critic, Trading, Technical analysis.
 
 ---
 
@@ -35,13 +35,13 @@ Nowadays, financial markets information spreads easier and more quickly than eve
 * **Huang et al. [9]:** Investigated cryptocurrency return predictability using a tree-based model trained on 124 technical indicators.
 * **Guarino et al. [4]:** Compared algorithmic trading agents using technical analysis with DRL agents. Found that DRL agents used indicators more efficiently but lacked explainability.
 * **Satarov et al. [6]:** Applied DQN to identify profitable trading points. Showed RL performed better than traditional strategies given low fees (0.15%).
-* **Mahayana et al. [10]:** Applied PPO for BTC trading using 1-minute candlesticks. Failed to outperform buy and hold strategy when transaction costs were considered.
-* **Schnaubelt [7]:** Applied PPO on limit orders, reducing transaction costs by up to 36.93%.
+* **Mahayana et al. [10]:** Applied a clipped policy-gradient agent for BTC trading using 1-minute candlesticks. Failed to outperform buy and hold strategy when transaction costs were considered.
+* **Schnaubelt [7]:** Applied a clipped policy-gradient method on limit orders, reducing transaction costs by up to 36.93%.
 * **Li et al. [11]:** Proposed a transformer-based architecture (LSRE-CAAN) for high-frequency trading.
 * **Lucarelli and Borrotti [12]:** Employed a multi-agent framework for portfolio management.
-* **Cui et al. [13]:** Used PPO with a Conditional Value at Risk (CVaR) reward function.
+* **Cui et al. [13]:** Used a CVaR-aware policy-gradient method.
 
-**Gap Analysis:** Previous works often disregarded transaction costs, prioritized profit over risk minimization, or lacked safety mechanisms. Our work aims to improve by combining market data with technical/social indicators, using a high-performance DRL algorithm (PPO) with a novel risk-adjusted reward function, and adding safety mechanisms.
+**Gap Analysis:** Previous works often disregarded transaction costs, prioritized profit over risk minimization, or lacked safety mechanisms. Our work aims to improve by combining market data with technical/social indicators, using high-performance DRL algorithms (QR-DQN and Categorical SAC) with a novel risk-adjusted reward function, and adding safety mechanisms.
 
 ---
 
@@ -98,10 +98,11 @@ $$ADL(n) = ADL(n-1) + \frac{(Close - Low) - (High - Close)}{High - Low} \cdot Vo
 The problem is formulated as a Markov Decision Process (MDP). The goal is to maximize the expected discounted cumulative return:
 $$V_{\pi}(s) = E[\sum_{t=0}^{T}\gamma^{t}r_{t+1}|s_{0}=s]$$
 
-#### 3.2.1 Proximal Policy Optimization (PPO)
-PPO maximizes the following objective function:
-$$L(\theta) = \hat{E_t}[min(r_t(\theta)\hat{A_t}, clip(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A_t})]$$
-where $r_t(\theta)$ is the probability ratio between new and old policies, and $\epsilon$ is the clipping factor. PPO uses an Actor-Critic architecture.
+#### 3.2.1 Distributional RL (QR-DQN) and Categorical SAC
+- **QR-DQN:** models the return distribution via quantile regression Huber loss:
+  $$L = \frac{1}{N} \sum_{i,j} |\tau_j - \mathbb{1}_{\delta_{ij}<0}| \cdot \text{Huber}_\kappa(\delta_{ij})$$
+  where $\delta_{ij}$ is the TD error between target and predicted quantiles.
+- **Categorical SAC:** maximizes expected return plus entropy with twin Q-networks and a categorical policy; temperature $\alpha$ is learned to match an entropy target, while target networks are updated softly with rate $\tau$.
 
 ### 3.3 TraderNet-CR
 
@@ -174,17 +175,19 @@ In this paper, we integrate all the aforementioned modules into a single integra
 
 ### 5.3 Hyper-parameter Tuning
 
-**Table 1: PPO Hyper-parameters**
+**Table 1: QR-DQN Hyper-parameters**
 
 | Parameter | Value |
 | :--- | :--- |
-| Epsilon clipping $\epsilon$ | 0.2 |
+| Num quantiles | 51 |
 | Mini-batch size | 128 |
 | Discount factor $\gamma$ | 0.99 |
 | Optimizer | Adam |
-| Learning rate | 0.001 |
-| Actor/Critic Conv layers | [(32, 3)] |
-| Actor/Critic Hidden layers | [256, 256] |
+| Learning rate | 0.0005 |
+| Target update interval | 2000 |
+| Huber $\kappa$ | 1.0 |
+| Prioritized replay $\alpha$ | 0.6 |
+| Prioritized replay $\beta$ start | 0.4 |
 
 **Table 2: Double DQN Hyper-parameters**
 
@@ -231,10 +234,10 @@ Experiments with $N=\{1, 2, 3, 4, 5\}$.
 
 ### 5.7 Integrated TraderNet-CR Evaluation
 
-The Integrated TraderNet-CR (combining PPO, Modified Round-Trip, Smurfing, and N-Consecutive) was compared against TraderNet-Smurf and a DDQN version.
+The Integrated TraderNet-CR (combining QR-DQN/Categorical SAC heads, Modified Round-Trip, Smurfing, and N-Consecutive) was compared against TraderNet-Smurf and a DDQN version.
 * The integrated approach results in lower but steadily increasing profits over the trading period.
 * It avoids high-risk trading and makes more certain actions.
-* DDQN showed sub-optimal performance compared to PPO in most experiments.
+* DDQN showed sub-optimal performance compared to the distributional and entropy-regularized variants in most experiments.
 
 ---
 

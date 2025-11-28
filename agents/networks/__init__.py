@@ -1,7 +1,7 @@
 """
 Neural Network Architectures for TraderNet-CRv2
 
-Contains Actor and Critic networks for PPO agent.
+Contains Actor and Critic networks usable by QR-DQN and Categorical SAC.
 """
 
 from agents.networks.actor import ActorNetwork

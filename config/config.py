@@ -181,18 +181,33 @@ DRAWDOWN_PENALTY_SCALE = 0.5        # Penalty multiplier (higher = more penalty)
 DRAWDOWN_PENALTY_MAX = 0.1          # Maximum penalty per step
 
 # =============================================================================
-# PPO Hyperparameters
+# QR-DQN Hyperparameters
 # =============================================================================
-PPO_PARAMS = {
+QR_DQN_PARAMS = {
     'learning_rate': 0.0005,
-    'epsilon_clip': 0.3,
-    'gamma': 0.99,              # Discount factor
-    'gae_lambda': 0.95,         # GAE lambda for advantage estimation
-    'num_epochs': 40,           # PPO epochs per update
+    'gamma': 0.99,                  # Discount factor
+    'num_quantiles': 51,
     'batch_size': 128,
-    'value_loss_coef': 0.5,     # Value loss coefficient
-    'entropy_coef': 0.01,       # Entropy bonus coefficient
-    'max_grad_norm': 0.5,       # Gradient clipping
+    'target_update_interval': 2000,
+    'huber_kappa': 1.0,
+    'replay_buffer_size': 500_000,
+    'priority_alpha': 0.6,
+    'priority_beta_start': 0.4,
+    'priority_beta_frames': 500_000,
+}
+
+# =============================================================================
+# Categorical SAC Hyperparameters
+# =============================================================================
+CATEGORICAL_SAC_PARAMS = {
+    'learning_rate': 0.0005,
+    'gamma': 0.99,                  # Discount factor
+    'tau': 0.005,                   # Target smoothing coefficient
+    'batch_size': 256,
+    'entropy_target': -1.0,         # Target entropy for temperature tuning
+    'alpha_init': 0.2,              # Initial entropy temperature
+    'replay_buffer_size': 500_000,
+    'target_update_interval': 1,
 }
 
 # =============================================================================

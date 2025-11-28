@@ -1,8 +1,8 @@
 """
-Actor Network for TraderNet-CRv2 PPO Agent
+Actor Network for TraderNet-CRv2 discrete-action agents.
 
 The Actor network outputs action probabilities for the trading policy.
-Maps state observations to a probability distribution over actions.
+Maps state observations to a probability distribution over actions (used by categorical SAC and can serve as a policy head for other discrete methods).
 """
 
 import torch
@@ -21,7 +21,7 @@ from config.config import (
 
 class ActorNetwork(nn.Module):
     """
-    Actor network for PPO agent that outputs action probabilities.
+    Actor network that outputs action probabilities for discrete-action agents.
 
     Architecture:
         - Conv1D layer for temporal feature extraction
@@ -196,7 +196,7 @@ class ActorNetwork(nn.Module):
     def evaluate_actions(self, states: torch.Tensor, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Evaluate log probabilities and entropy for given state-action pairs.
-        Used during PPO training.
+        Useful for policy-gradient style training (e.g., categorical SAC).
 
         Args:
             states: Batch of state observations (batch, sequence_length, num_features)

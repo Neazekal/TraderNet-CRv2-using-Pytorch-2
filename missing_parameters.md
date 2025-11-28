@@ -160,16 +160,20 @@ hold_rewards[hold_rewards > 0] = 0   # Cap at 0 (no positive hold reward for Tra
 
 ---
 
-## 7. PPO Implementation Details (from code)
+## 7. RL Implementation Details (QR-DQN & Categorical SAC)
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| **Learning rate** | `0.0005` | Paper said 0.001, code uses 0.0005 |
-| **Epsilon clipping** | `0.3` | Paper said 0.2, code default is 0.3 |
-| **Lambda (GAE)** | `0.95` | Not in paper |
-| **Num epochs** | `40` | Not in paper |
-| **Use GAE** | `True` | Generalized Advantage Estimation |
-| **Activation function** | `gelu` | Not in paper (paper implied ReLU) |
+| **QR-DQN learning rate** | `0.0005` | Distributional value updates |
+| **Num quantiles** | `51` | Standard QR-DQN setting |
+| **Target update interval** | `2000` | Soft copy frequency |
+| **Prioritized replay (alpha, beta_start)** | `0.6`, `0.4` | Matches README defaults |
+| **Categorical SAC learning rate** | `0.0005` | Shared across policy and Q nets |
+| **Tau** | `0.005` | Target smoothing |
+| **Entropy target** | `-1.0` | For temperature auto-tuning |
+| **Alpha init** | `0.2` | Initial temperature |
+| **Batch sizes** | `128` (QR-DQN), `256` (Cat-SAC) | Off-policy updates |
+| **Activation function** | `gelu` | Backbone activation |
 | **Gamma (discount)** | `0.99` | Matches paper |
 
 ---
