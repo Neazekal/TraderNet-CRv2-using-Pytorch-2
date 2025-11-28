@@ -206,6 +206,12 @@ NETWORK_PARAMS = {
     'dropout': 0.0,             # Dropout rate (0 = no dropout)
 }
 
+# Network Initialization Parameters
+NETWORK_INIT_PARAMS = {
+    'value_head_init_range': 0.03,      # Uniform init range for critic output layer [-x, +x]
+    'log_prob_epsilon': 1e-8,           # Epsilon for numerical stability in log probability
+}
+
 # =============================================================================
 # Training Settings
 # =============================================================================

@@ -47,8 +47,11 @@ tradernet-pytorch/
 │       ├── base.py                # Base reward class
 │       ├── market_limit.py        # MarketLimitOrder reward
 │       └── smurf.py               # Smurf conservative reward
-├── agents/                        # (Phase 4+) PPO agent & networks
-├── metrics/                       # (Phase 4+) Trading metrics
+├── agents/
+│   └── networks/
+│       ├── actor.py               # Actor network (policy)
+│       └── critic.py              # Critic network (value function)
+├── metrics/                       # (Phase 5+) Trading metrics
 ├── checkpoints/                   # Model checkpoints (gitignored)
 ├── IMPLEMENTATION_PLAN.md         # Detailed implementation plan
 └── requirements.txt               # Python dependencies
@@ -199,7 +202,9 @@ This lightweight approach (no HMM or complex models) provides regime awareness f
 - Be more aggressive in trending markets
 - Be cautious in high volatility periods
 
-### Features (21 total)
+### Features (28 total: 21 active + 7 reserved)
+
+**Active Features (21)**:
 
 | Category | Features |
 |----------|----------|
@@ -211,6 +216,8 @@ This lightweight approach (no HMM or complex models) provides regime awareness f
 | Volume (2) | adl_diffs2, obv_diffs2 |
 | Regime (1) | regime_encoded (0=TRENDING_UP, 1=TRENDING_DOWN, 2=HIGH_VOLATILITY, 3=RANGING) |
 | Funding (1) | funding_rate (raw 8-hour funding rate, forward-filled) |
+
+**Reserved Features (7)**: Additional funding-derived features reserved for future experimentation (e.g., funding rate moving averages, differences, volatility).
 
 ### Funding Rate Feature
 
@@ -245,8 +252,8 @@ eval_closes = data['eval']['closes']
 
 ### Sequence Format
 
-Each state is a sliding window of 12 hourly timesteps with 21 features:
-- Shape: `(num_samples, 12, 21)`
+Each state is a sliding window of 12 hourly timesteps with 28 features:
+- Shape: `(num_samples, 12, 28)`
 - Used as input to the Conv1D neural network
 
 ---
@@ -540,6 +547,128 @@ info = {
 
 ---
 
+## Phase 4: Neural Networks
+
+Deep neural networks for the PPO agent using PyTorch.
+
+### Actor Network
+
+The Actor network outputs action probabilities (policy).
+
+```python
+from agents.networks.actor import ActorNetwork
+
+actor = ActorNetwork()
+print(f"Parameters: {sum(p.numel() for p in actor.parameters()):,}")
+# Parameters: 151,459
+```
+
+**Architecture**:
+- **Conv1D**: 28 input channels → 32 filters, kernel size 3
+- **Flatten**: 320 features
+- **FC Layer 1**: 320 → 256 (GELU activation)
+- **FC Layer 2**: 256 → 256 (GELU activation)
+- **Output**: 256 → 3 (Softmax for action probabilities)
+
+**Input**: `(batch, 12, 28)` - 12 timesteps × 28 features
+**Output**: `(batch, 3)` - Probabilities for LONG/SHORT/FLAT
+
+**Methods**:
+- `forward(state)` - Get action probabilities
+- `get_action(state, deterministic=False)` - Sample action and log probability
+- `evaluate_actions(states, actions)` - Compute log probs & entropy for PPO
+
+### Critic Network
+
+The Critic network estimates state values (V(s)) for advantage calculation.
+
+```python
+from agents.networks.critic import CriticNetwork
+
+critic = CriticNetwork()
+print(f"Parameters: {sum(p.numel() for p in critic.parameters()):,}")
+# Parameters: 150,945
+```
+
+**Architecture**:
+- **Conv1D**: 28 input channels → 32 filters, kernel size 3
+- **Flatten**: 320 features
+- **FC Layer 1**: 320 → 256 (GELU activation)
+- **FC Layer 2**: 256 → 256 (GELU activation)
+- **Output**: 256 → 1 (Linear for value estimate)
+
+**Input**: `(batch, 12, 28)` - 12 timesteps × 28 features
+**Output**: `(batch, 1)` - State value estimate
+
+**Methods**:
+- `forward(state)` - Get state value
+- `get_value(state)` - Single state value estimate
+- `evaluate_states(states)` - Batch value estimates for PPO
+
+### Key Features
+
+**Shared Architecture**:
+- Both networks use the same Conv1D + FC backbone
+- Only the output layer differs (3 actions vs 1 value)
+- GELU activation throughout (Gaussian Error Linear Unit)
+
+**Weight Initialization**:
+- Conv/Hidden layers: Xavier and Kaiming initialization
+- Critic output layer: Uniform[-0.03, 0.03] for stable value learning
+
+**PPO Compatibility**:
+- Actor provides log probabilities and entropy for policy gradient
+- Critic provides value estimates for advantage calculation
+- Both support batched forward passes for efficient training
+
+### Testing Networks
+
+```python
+import torch
+from agents.networks.actor import ActorNetwork
+from agents.networks.critic import CriticNetwork
+
+# Create networks
+actor = ActorNetwork()
+critic = CriticNetwork()
+
+# Random state input (12 timesteps, 28 features)
+state = torch.randn(12, 28)
+
+# Actor: Get action probabilities
+action_probs = actor(state.unsqueeze(0))
+print(f"Action probs: {action_probs}")  # [0.33, 0.33, 0.34] (sums to 1.0)
+
+# Actor: Sample an action
+action, log_prob = actor.get_action(state, deterministic=False)
+print(f"Action: {action}, Log prob: {log_prob:.4f}")  # Action: 2, Log prob: -1.0986
+
+# Critic: Get state value
+value = critic.get_value(state)
+print(f"State value: {value:.4f}")  # State value: 0.0234
+```
+
+### Network Configuration
+
+All network parameters are centralized in `config/config.py`:
+
+```python
+NETWORK_PARAMS = {
+    'conv_filters': 32,
+    'conv_kernel': 3,
+    'fc_layers': [256, 256],
+    'activation': 'gelu',
+    'dropout': 0.0,
+}
+
+NETWORK_INIT_PARAMS = {
+    'value_head_init_range': 0.03,      # Critic output layer init range
+    'log_prob_epsilon': 1e-8,           # Numerical stability for log prob
+}
+```
+
+---
+
 ## Configuration
 
 All hyperparameters are centralized in `config/config.py`:
@@ -567,8 +696,8 @@ POSITION_SHORT = -1           # -1 = bearish
 POSITION_FLAT = 0             # 0 = neutral
 
 # Feature Engineering
-NUM_FEATURES = 21
-OBS_SHAPE = (12, 21)          # Observation shape for neural network
+NUM_FEATURES = 28             # Total features (21 active + 7 reserved)
+OBS_SHAPE = (12, 28)          # Observation shape for neural network
 
 # Reward Settings
 SMURF_HOLD_REWARD = 0.0055    # Fixed HOLD reward for Smurf agent
@@ -672,7 +801,7 @@ print(f'Closed position, Final balance: \${info[\"balance\"]:,.2f}')
 
 Expected output:
 ```
-Observation space: Box(0.0, 1.0, (12, 21), float32)
+Observation space: Box(0.0, 1.0, (12, 28), float32)
 Action space: Discrete(3)
 Actions: LONG(0), SHORT(1), FLAT(2)
 Initial balance: $10,000.00
@@ -688,7 +817,7 @@ Closed position, Final balance: $9,975.21
 - [x] **Phase 1**: Project setup & Binance data downloader
 - [x] **Phase 2**: Technical analysis & preprocessing pipeline
 - [x] **Phase 3**: Trading environment & reward functions
-- [ ] **Phase 4**: Neural networks (Actor/Critic)
+- [x] **Phase 4**: Neural networks (Actor/Critic)
 - [ ] **Phase 5**: PPO agent implementation
 - [ ] **Phase 6**: Training & evaluation scripts
 - [ ] **Phase 7**: Metrics & visualization
