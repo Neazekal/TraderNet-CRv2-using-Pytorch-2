@@ -9,7 +9,7 @@ Builds the final dataset by combining:
 - Funding rate features (8 features from Binance Futures)
 - Feature scaling (Min-Max to [0, 1])
 
-Output: 28 features ready for model training.
+Output: 21 features ready for model training.
 """
 
 import pandas as pd

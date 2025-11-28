@@ -140,7 +140,7 @@ class QRDQNAgent:
         Select action using epsilon-greedy policy.
 
         Args:
-            state: Current observation (shape: (12, 28))
+            state: Current observation (shape: (12, 21))
             epsilon: Exploration probability
 
         Returns:
@@ -385,7 +385,7 @@ class QuantileQNetwork(nn.Module):
         Forward pass.
 
         Args:
-            state: Input state (batch, 12, 28)
+            state: Input state (batch, 12, 21)
 
         Returns:
             Quantiles (batch, num_actions, num_quantiles)
@@ -411,11 +411,11 @@ class QuantileQNetworkBackbone(nn.Module):
         )
 
         # Calculate flattened size after conv
-        # Input: (batch, 28, 12) → Conv1D → (batch, 32, 12) → flatten → (batch, 384)
-        # Actually with padding: 28 channels → 32 channels, 12 timesteps stay 12
+        # Input: (batch, 21, 12) → Conv1D → (batch, 32, 12) → flatten → (batch, 384)
+        # Actually with padding: 21 channels → 32 channels, 12 timesteps stay 12
         # So flat size = 32 * 12 = 384, but let's compute properly:
-        # (batch, 12, 28) → transpose to (batch, 28, 12) for Conv1D
-        # Conv1d(28→32, kernel=3, padding=1) keeps temporal size → (batch, 32, 12)
+        # (batch, 12, 21) → transpose to (batch, 21, 12) for Conv1D
+        # Conv1d(21→32, kernel=3, padding=1) keeps temporal size → (batch, 32, 12)
         # flatten → 32 * 12 = 384
 
         self.flatten_size = 32 * 12  # Empirically determined
@@ -443,14 +443,14 @@ class QuantileQNetworkBackbone(nn.Module):
         Forward pass.
 
         Args:
-            state: (batch, 12, 28) - 12 timesteps, 28 features
+            state: (batch, 12, 21) - 12 timesteps, 21 features
 
         Returns:
             Features (batch, 256)
         """
         # Conv1d expects (batch, channels, seq_length)
-        x = state.transpose(1, 2)  # (batch, 12, 28) → (batch, 28, 12)
-        x = self.conv1d(x)  # (batch, 28, 12) → (batch, 32, 12)
+        x = state.transpose(1, 2)  # (batch, 12, 21) → (batch, 21, 12)
+        x = self.conv1d(x)  # (batch, 21, 12) → (batch, 32, 12)
         x = self.activation(x)
 
         # Flatten
@@ -480,10 +480,10 @@ if __name__ == '__main__':
     # Simulate some experiences
     print("\nAdding experiences to buffer...")
     for i in range(50):
-        state = np.random.randn(12, 28).astype(np.float32)
+        state = np.random.randn(12, 21).astype(np.float32)
         action = np.random.randint(0, agent.num_actions)
         reward = np.random.randn()
-        next_state = np.random.randn(12, 28).astype(np.float32)
+        next_state = np.random.randn(12, 21).astype(np.float32)
         done = np.random.rand() < 0.1
 
         agent.add_experience(state, action, reward, next_state, done)
@@ -500,7 +500,7 @@ if __name__ == '__main__':
 
     # Test action selection
     print("\nAction selection...")
-    state = np.random.randn(12, 28).astype(np.float32)
+    state = np.random.randn(12, 21).astype(np.float32)
     action = agent.select_action(state, epsilon=0.0)
     print(f"Selected action: {action} ({ACTION_NAMES[action]})")
 

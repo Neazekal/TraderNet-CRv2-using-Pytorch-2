@@ -206,7 +206,7 @@ class ReplayBuffer:
         Add experience to buffer.
 
         Args:
-            state: Observation (shape: (12, 28) for TraderNet)
+            state: Observation (shape: (12, 21) for TraderNet)
             action: Action taken (0, 1, or 2)
             reward: Reward received
             next_state: Next observation
@@ -357,10 +357,10 @@ if __name__ == '__main__':
 
     # Add some dummy experiences
     for i in range(100):
-        state = np.random.randn(12, 28).astype(np.float32)
+        state = np.random.randn(12, 21).astype(np.float32)
         action = np.random.randint(0, 3)
         reward = np.random.randn()
-        next_state = np.random.randn(12, 28).astype(np.float32)
+        next_state = np.random.randn(12, 21).astype(np.float32)
         done = np.random.rand() < 0.1
 
         buffer.add(state, action, reward, next_state, done)

@@ -158,7 +158,7 @@ class CategoricalSACAgent:
         Select action using policy.
 
         Args:
-            state: Current observation (shape: (12, 28))
+            state: Current observation (shape: (12, 21))
             deterministic: Use max probability instead of sampling
 
         Returns:
@@ -492,7 +492,7 @@ class SACQNetwork(nn.Module):
         Forward pass.
 
         Args:
-            state: Input state (batch, 12, 28)
+            state: Input state (batch, 12, 21)
 
         Returns:
             Q-values (batch, num_actions)
@@ -541,14 +541,14 @@ class SACQNetworkBackbone(nn.Module):
         Forward pass.
 
         Args:
-            state: (batch, 12, 28) - 12 timesteps, 28 features
+            state: (batch, 12, 21) - 12 timesteps, 21 features
 
         Returns:
             Features (batch, 256)
         """
         # Conv1d expects (batch, channels, seq_length)
-        x = state.transpose(1, 2)  # (batch, 12, 28) → (batch, 28, 12)
-        x = self.conv1d(x)  # (batch, 28, 12) → (batch, 32, 12)
+        x = state.transpose(1, 2)  # (batch, 12, 21) → (batch, 21, 12)
+        x = self.conv1d(x)  # (batch, 21, 12) → (batch, 32, 12)
         x = self.activation(x)
 
         # Flatten
@@ -580,10 +580,10 @@ if __name__ == '__main__':
     # Simulate some experiences
     print("\nAdding experiences to buffer...")
     for i in range(50):
-        state = np.random.randn(12, 28).astype(np.float32)
+        state = np.random.randn(12, 21).astype(np.float32)
         action = np.random.randint(0, agent.num_actions)
         reward = np.random.randn()
-        next_state = np.random.randn(12, 28).astype(np.float32)
+        next_state = np.random.randn(12, 21).astype(np.float32)
         done = np.random.rand() < 0.1
 
         agent.add_experience(state, action, reward, next_state, done)
@@ -592,7 +592,7 @@ if __name__ == '__main__':
 
     # Test action selection
     print("\nAction selection...")
-    state = np.random.randn(12, 28).astype(np.float32)
+    state = np.random.randn(12, 21).astype(np.float32)
     action_stochastic = agent.select_action(state, deterministic=False)
     action_deterministic = agent.select_action(state, deterministic=True)
     print(f"Stochastic action: {action_stochastic} ({ACTION_NAMES[action_stochastic]})")

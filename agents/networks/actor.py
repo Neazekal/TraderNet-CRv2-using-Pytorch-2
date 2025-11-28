@@ -26,7 +26,7 @@ class ActorNetwork(nn.Module):
     """
     Actor network that outputs action probabilities for discrete-action agents.
 
-    Input: (batch_size, sequence_length, num_features) = (batch, 12, 28)
+    Input: (batch_size, sequence_length, num_features) = (batch, 12, 21)
     Output: (batch_size, num_actions) = (batch, 3) - action probabilities
     """
 

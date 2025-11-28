@@ -22,7 +22,7 @@ class CriticNetwork(nn.Module):
     """
     Critic network that estimates state values for discrete-action agents.
 
-    Input: (batch_size, sequence_length, num_features) = (batch, 12, 28)
+    Input: (batch_size, sequence_length, num_features) = (batch, 12, 21)
     Output: (batch_size, 1) = (batch, 1) - state value estimates
     """
 
